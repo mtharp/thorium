@@ -22,16 +22,13 @@ const (
 )
 
 var (
-	//"Bets are OPEN for Chief he-fonba vs Heitasupermode! (A Tier) (matchmaking) www.saltybet.com"
-	lineOpen = regexp.MustCompile(`Bets are OPEN for (.*) vs (.*)! \((?:(.*) Tier|Requested by .*?)\)(?: \(.*\))? (?:\((.*)\) www.saltybet.com|tournament bracket.*)$`)
-	//"Bets are locked. Gohan fight money- $58,359,936, Farmer strikes back- $533,093"
+	lineOpen   = regexp.MustCompile(`Bets are OPEN for (.*) vs (.*)! \((?:(.*) Tier|Requested by .*?)\)(?: \(.*\))? (?:\((.*)\) www.saltybet.com|tournament bracket.*)$`)
 	closedPart = `.*?(?:\(([^)]+)\) )?- \$(.*)`
+	tierPart   = `(?:.|None)`
 	lineClosed = regexp.MustCompile(`Bets are locked\. ` + closedPart + `, ` + closedPart)
 	linePaid   = regexp.MustCompile(`.* wins! Payouts to Team (.*)\. (.*)!`)
 	lineMode   = regexp.MustCompile(`^(Tournament|Matchmaking|Exhibitions) will start shortly`)
-	lineIgnore = regexp.MustCompile(`^(wtfSalt |wtfVeku Note:|Current pot|Current stage|Current odds|Download WAIFU Wars|.* by .*, .* by .*|.(?: / .)? Tier$|The current game mode is:|The current tournament bracket|Palettes of previous match:|.* vs .* was requested by)`)
-	// SaltyBet: Tournament will start shortly. Thanks for watching! wtfSALTY
-	//Broadcaster5-Year SubscriberVerifiedSaltyBet: Matchmaking will start shortly. Thanks for watching! wtfSALTY
+	lineIgnore = regexp.MustCompile(`^(wtfSalt |wtfVeku Note:|Current pot|Current stage|Current odds|Download WAIFU Wars|.* by.*, .* by.*|` + tierPart + `(?: / ` + tierPart + `)? Tier$|The current game mode is:|The current tournament bracket|Palettes of previous match:|.* vs .* was requested by)`)
 )
 
 func runIRC(ts oauth2.TokenSource) error {
