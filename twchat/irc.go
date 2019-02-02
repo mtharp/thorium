@@ -24,13 +24,13 @@ const (
 )
 
 var (
-	lineOpen   = regexp.MustCompile(`Bets are OPEN for (.*) vs (.*)! \((?:(.*) Tier|Requested by .*?)\)(?: \(.*\))? (?:\((.*)\) www.saltybet.com|tournament bracket.*)$`)
+	lineOpen   = regexp.MustCompile(`Bets are OPEN for (.*) vs (.*)! \((?:(.*) Tier|Requested by .*?)\)(?: \(.*\))? (?:\((.*)\) www.saltybet.com|(tournament) bracket.*)$`)
 	closedPart = `.*?(?:\(([^)]+)\) )?- \$(.*)`
 	tierPart   = `(?:.|None)`
 	lineClosed = regexp.MustCompile(`Bets are locked\. ` + closedPart + `, ` + closedPart)
 	linePaid   = regexp.MustCompile(`.* wins! Payouts to Team (.*)\. (.*)!`)
 	lineMode   = regexp.MustCompile(`^(Tournament|Matchmaking|Exhibitions) will start shortly`)
-	lineIgnore = regexp.MustCompile(`^(wtfSalt |wtfVeku Note:|Current pot|Current stage|Current odds|Download WAIFU Wars|.* by.*, .* by.*|` + tierPart + `(?: / ` + tierPart + `)? Tier$|The current game mode is:|The current tournament bracket|Palettes of previous match:|.* vs .* was requested by)`)
+	lineIgnore = regexp.MustCompile(`^(wtfSalt |wtfVeku Note:|Current pot|Current stage|Current odds|Download WAIFU Wars|.* by.*, .* by.*|` + tierPart + `(?: / ` + tierPart + `)? Tier$|The current game mode is:|The current tournament bracket|Palettes of previous match:|.* vs .* was requested by|Join the official Salty Bet)`)
 )
 
 type matchRecord struct {
@@ -75,13 +75,16 @@ func runIRC(ts oauth2.TokenSource) error {
 		}
 		text := line.Text()
 		if m := lineOpen.FindStringSubmatch(text); m != nil {
-			log.Printf("bets open: red=%s blue=%s tier=%s mode=%s", m[1], m[2], m[3], m[4])
 			mr = matchRecord{
 				Name1: m[1],
 				Name2: m[2],
 				Tier:  m[3],
 				Mode:  m[4],
 			}
+			if mr.Mode == "" && m[5] == "tournament" {
+				mr.Mode = "tournament"
+			}
+			log.Printf("bets open: red=%s blue=%s tier=%s mode=%s", m[1], m[2], m[3], mr.Mode)
 			status = "open"
 		} else if m := lineClosed.FindStringSubmatch(text); m != nil {
 			log.Printf("bets locked: streakRed=%s potRed=%s streakBlue=%s potBlue=%s", m[1], m[2], m[3], m[4])

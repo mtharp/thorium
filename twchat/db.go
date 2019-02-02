@@ -18,6 +18,9 @@ func connectDB() (*pgx.ConnPool, error) {
 }
 
 func recordMatch(db *pgx.ConnPool, rec matchRecord) {
+	if rec.Tier == "" || len(rec.Tier) > 1 {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var winner, loser string
