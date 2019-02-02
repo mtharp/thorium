@@ -2,10 +2,17 @@ module github.com/mtharp/thorium
 
 require (
 	github.com/BurntSushi/toml v0.3.1 // indirect
+	github.com/cockroachdb/apd v1.1.0 // indirect
 	github.com/fluffle/goirc v1.0.1
 	github.com/golang/mock v1.2.0 // indirect
 	github.com/gorilla/websocket v1.4.0
+	github.com/jackc/fake v0.0.0-20150926172116-812a484cc733 // indirect
+	github.com/jackc/pgx v3.3.0+incompatible
 	github.com/kr/pretty v0.1.0 // indirect
+	github.com/lib/pq v1.0.0 // indirect
+	github.com/pkg/errors v0.8.1 // indirect
+	github.com/satori/go.uuid v1.2.0 // indirect
+	github.com/shopspring/decimal v0.0.0-20180709203117-cd690d0c9e24 // indirect
 	github.com/spf13/afero v1.2.0 // indirect
 	github.com/spf13/viper v1.3.1
 	github.com/stretchr/testify v1.3.0 // indirect
