@@ -31,12 +31,22 @@ const (
 	pingInterval = 15 * time.Second
 	pingTimeout  = 3*pingInterval + 1*time.Second
 
-	fetchHoldoff = time.Second
+	fetchHoldoff  = time.Second
+	fetchInterval = 2 * time.Minute
 )
 
 var (
 	lastModified = make(map[string]string)
 	watching     = make(map[string]bool)
+
+	modeMatch = map[string]string{
+		"until the next tournament":          "matchmaking",
+		"Tournament mode will be activated":  "matchmaking",
+		"characters are left in the bracket": "tournament",
+		"FINAL ROUND":                        "tournament",
+		"exhibition matches left":            "exhibitions",
+		"Matchmaking mode will be activated": "exhibitions",
+	}
 )
 
 func subWS(ch chan struct{}) {
@@ -189,7 +199,9 @@ type playerData struct {
 }
 
 var (
+	lastStatus     string
 	lastP1, lastP2 string
+	mode           string
 	banks          map[string]playerData
 )
 
@@ -209,6 +221,10 @@ func update() error {
 		return err
 	}
 	status := strfield(d["status"])
+	if status == lastStatus {
+		return nil
+	}
+	lastStatus = status
 	switch status {
 	case "locked":
 		d, err = fetch(dataURL)
@@ -219,6 +235,13 @@ func update() error {
 		lastP2 = strfield(d["p2name"])
 		p1total := intfield(d["p1total"])
 		p2total := intfield(d["p2total"])
+		mode = ""
+		rem := strfield(d["remaining"])
+		for mstr, mmode := range modeMatch {
+			if strings.Contains(rem, mstr) {
+				mode = mmode
+			}
+		}
 		banks = make(map[string]playerData)
 		for _, iattrs := range d {
 			attrs, _ := iattrs.(map[string]interface{})
@@ -237,12 +260,14 @@ func update() error {
 					b.win = (b.wager*p2total + p1total - 1) / p1total
 					n1 = "<" + n1 + ">"
 				}
-				log.Printf("%s %d bets %d : %s : %s", name, b.bank, b.wager, n1, n2)
+				log.Printf("[%11s] %s %d bets %d : %s : %s", mode, name, b.bank, b.wager, n1, n2)
 				banks[name] = b
 			}
 		}
 	case "1", "2":
-		if strfield(d["p1name"]) != lastP1 || strfield(d["p2name"]) != lastP2 {
+		if lastP1 == "" {
+			return nil
+		} else if strfield(d["p1name"]) != lastP1 || strfield(d["p2name"]) != lastP2 {
 			return errors.New("player mismatch")
 		}
 		for name, data := range banks {
@@ -252,11 +277,13 @@ func update() error {
 				change = data.win
 				result = "wins"
 			}
-			log.Printf("%s %s %+d -> %d", name, result, change, data.bank+change)
-			f, _ := os.OpenFile(name+".csv", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-			if f != nil {
-				fmt.Fprintf(f, "%d,%d\n", time.Now().Unix(), data.bank+change)
-				f.Close()
+			log.Printf("[%11s] %s %s %+d -> %d", mode, name, result, change, data.bank+change)
+			if mode != "tournament" {
+				f, _ := os.OpenFile(name+".csv", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+				if f != nil {
+					fmt.Fprintf(f, "%d,%d\n", time.Now().Unix(), data.bank+change)
+					f.Close()
+				}
 			}
 		}
 		for k := range banks {
