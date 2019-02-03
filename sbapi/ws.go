@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/spf13/viper"
+
+	_ "net/http/pprof"
 )
 
 const (
@@ -30,9 +33,9 @@ const (
 
 	pingInterval = 15 * time.Second
 	pingTimeout  = 3*pingInterval + 1*time.Second
+	staleTimeout = 15 * time.Minute
 
-	fetchHoldoff  = time.Second
-	fetchInterval = 2 * time.Minute
+	fetchHoldoff = time.Second
 )
 
 var (
@@ -51,7 +54,7 @@ var (
 
 func subWS(ch chan struct{}) {
 	delayRetry := minRetry
-	pongch := make(chan struct{})
+	pongch := make(chan bool)
 	first := true
 	for {
 		if !first {
@@ -69,6 +72,7 @@ func subWS(ch chan struct{}) {
 			continue
 		}
 		donech := make(chan struct{})
+		// start sending keepalive pings
 		go keepalive(c, pongch, donech)
 		for {
 			_, msg, err := c.ReadMessage()
@@ -76,15 +80,17 @@ func subWS(ch chan struct{}) {
 				log.Println("read error:", err)
 				break
 			}
-			select {
-			case pongch <- struct{}{}:
-			default:
-			}
+			var gotData bool
 			if bytes.HasPrefix(msg, []byte("42")) {
 				select {
 				case ch <- struct{}{}:
 				default:
 				}
+				gotData = true
+			}
+			select {
+			case pongch <- gotData:
+			default:
 			}
 		}
 		close(donech)
@@ -92,9 +98,11 @@ func subWS(ch chan struct{}) {
 	}
 }
 
-func keepalive(conn *websocket.Conn, pongch, donech chan struct{}) {
+func keepalive(conn *websocket.Conn, pongch chan bool, donech chan struct{}) {
 	lastPong := time.NewTimer(pingTimeout)
 	defer lastPong.Stop()
+	stale := time.NewTimer(staleTimeout)
+	defer stale.Stop()
 	ping := time.NewTicker(pingInterval)
 	defer ping.Stop()
 	for {
@@ -103,10 +111,17 @@ func keepalive(conn *websocket.Conn, pongch, donech chan struct{}) {
 			return
 		case <-ping.C:
 			conn.WriteMessage(1, []byte("2"))
-		case <-pongch:
+		case gotData := <-pongch:
 			lastPong.Reset(pingTimeout)
+			if gotData {
+				stale.Reset(staleTimeout)
+			}
 		case <-lastPong.C:
 			log.Printf("error: websocket timed out")
+			conn.Close()
+			return
+		case <-stale.C:
+			log.Printf("error: no data from websocket for %s, reconnecting")
 			conn.Close()
 			return
 		}
@@ -124,6 +139,18 @@ func main() {
 	for _, name := range viper.GetStringSlice("watch") {
 		watching[name] = true
 	}
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalln("error: can't connect to db:", err)
+	}
+	// serve pprof
+	lis, err := net.Listen("tcp", ":0")
+	if err != nil {
+		log.Fatalln("error:", err)
+	}
+	log.Printf("serving pprof on http://localhost:%d/debug/pprof/", lis.Addr().(*net.TCPAddr).Port)
+	go http.Serve(lis, nil)
+	// watch websocket
 	ch := make(chan struct{}, 1)
 	go subWS(ch)
 	jar, _ := cookiejar.New(nil)
@@ -134,7 +161,7 @@ func main() {
 		case <-ch:
 			rt.Reset(fetchHoldoff)
 		case <-rt.C:
-			if err := update(); err != nil {
+			if err := update(db); err != nil {
 				log.Printf("error updating state: %s", err)
 			}
 		}
@@ -202,7 +229,7 @@ var (
 	lastStatus     string
 	lastP1, lastP2 string
 	mode           string
-	banks          map[string]playerData
+	banks          = make(map[string]playerData)
 )
 
 func strfield(d interface{}) string {
@@ -215,7 +242,7 @@ func intfield(d interface{}) int64 {
 	return n
 }
 
-func update() error {
+func update(db *DB) error {
 	d, err := fetch(stateURL)
 	if err != nil {
 		return err
@@ -242,26 +269,28 @@ func update() error {
 				mode = mmode
 			}
 		}
-		banks = make(map[string]playerData)
+		for k := range banks {
+			delete(banks, k)
+		}
 		for _, iattrs := range d {
 			attrs, _ := iattrs.(map[string]interface{})
 			name := strfield(attrs["n"])
+			b := playerData{
+				bank:   intfield(attrs["b"]),
+				wager:  intfield(attrs["w"]),
+				player: strfield(attrs["p"]),
+			}
+			n1, n2 := lastP1, lastP2
+			if b.player == "2" {
+				b.win = (b.wager*p1total + p2total - 1) / p2total
+				n2 = "<" + n2 + ">"
+			} else {
+				b.win = (b.wager*p2total + p1total - 1) / p1total
+				n1 = "<" + n1 + ">"
+			}
+			banks[name] = b
 			if watching[name] {
-				b := playerData{
-					bank:   intfield(attrs["b"]),
-					wager:  intfield(attrs["w"]),
-					player: strfield(attrs["p"]),
-				}
-				n1, n2 := lastP1, lastP2
-				if b.player == "2" {
-					b.win = (b.wager*p1total + p2total - 1) / p2total
-					n2 = "<" + n2 + ">"
-				} else {
-					b.win = (b.wager*p2total + p1total - 1) / p1total
-					n1 = "<" + n1 + ">"
-				}
 				log.Printf("[%11s] %s %d bets %d : %s : %s", mode, name, b.bank, b.wager, n1, n2)
-				banks[name] = b
 			}
 		}
 	case "1", "2":
@@ -277,17 +306,20 @@ func update() error {
 				change = data.win
 				result = "wins"
 			}
-			log.Printf("[%11s] %s %s %+d -> %d", mode, name, result, change, data.bank+change)
+			data.bank += change
 			if mode != "tournament" {
-				f, _ := os.OpenFile(name+".csv", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-				if f != nil {
-					fmt.Fprintf(f, "%d,%d\n", time.Now().Unix(), data.bank+change)
-					f.Close()
+				db.SetBank(name, data.bank)
+			}
+			if watching[name] {
+				log.Printf("[%11s] %s %s %+d -> %d", mode, name, result, change, data.bank)
+				if mode != "tournament" {
+					f, _ := os.OpenFile(name+".csv", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+					if f != nil {
+						fmt.Fprintf(f, "%d,%d\n", time.Now().Unix(), data.bank)
+						f.Close()
+					}
 				}
 			}
-		}
-		for k := range banks {
-			delete(banks, k)
 		}
 	}
 	return nil
