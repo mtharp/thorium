@@ -1,16 +1,34 @@
 package main
 
 import (
-	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"math"
 	"math/rand"
-	"os"
 	"sort"
+	"sync"
 
 	deep "github.com/patrikeh/go-deep"
-	"github.com/patrikeh/go-deep/training"
 	"github.com/spf13/viper"
+)
+
+type tierData struct {
+	recs  []*matchRecord
+	chars charStatsMap
+
+	weights [][][]float64
+	ppool   sync.Pool
+}
+
+var (
+	tierIdx = map[string]int{
+		"P": 0,
+		"B": 1,
+		"A": 2,
+		"S": 3,
+		"X": 4,
+	}
+	tiers [5]*tierData
 )
 
 func main() {
@@ -19,73 +37,55 @@ func main() {
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalln("error:", err)
 	}
-	tier := os.Args[1]
-	recs, err := getRecords(tier, "imported_matches")
+	tierRecs, err := getRecords("imported_matches")
 	if err != nil {
 		log.Fatalln("error:", err)
 	}
-	chars := make(charStatsMap)
-	chars.Update(recs)
-	e := make(training.Examples, len(recs))
-	for i, rec := range recs {
-		e[i] = training.Example{
-			Input:    chars.Vector(rec),
-			Response: rec.Response(),
+	var allRecs []*matchRecord
+	for tier, i := range tierIdx {
+		recs := tierRecs[tier]
+		allRecs = append(allRecs, recs...)
+		chars := make(charStatsMap)
+		chars.Update(recs)
+		d := &tierData{recs: recs, chars: chars}
+		if err := d.makePredictor("pred" + tier + ".dat"); err != nil {
+			log.Fatalln("error:", err)
 		}
+		tiers[i] = d
 	}
-	var nn *deep.Neural
-	filename := "nn" + tier + ".dat"
-	blob, err := ioutil.ReadFile(filename)
-	if err == nil {
-		nn, err = deep.Unmarshal(blob)
-		if err != nil {
-			panic(err)
-		}
-	} else {
-		nn = deep.NewNeural(&deep.Config{
-			Inputs:     5,
-			Layout:     []int{5, 3, 2},
-			Activation: deep.ActivationSigmoid,
-			Mode:       deep.ModeMultiClass,
-			Weight:     deep.NewNormal(1.0, 0.0),
-			Bias:       true,
-		})
-		optimizer := training.NewAdam(0.001, 0.9, 0.999, 1e-8)
-		trainer := training.NewBatchTrainer(optimizer, 1, 200, 6)
-		x, y := e.Split(0.75)
-		trainer.Train(nn, x, y, 250)
-		blob, err := nn.Marshal()
-		if err != nil {
-			panic(err)
-		}
-		if err := ioutil.WriteFile(filename, blob, 0644); err != nil {
-			panic(err)
-		}
+	ncfg := &deep.Config{
+		Inputs:     betVectorSize,
+		Layout:     []int{6, 4, 2},
+		Activation: deep.ActivationSigmoid,
+		Mode:       deep.ModeRegression,
+		Weight:     deep.NewNormal(100.0, 0.0),
 	}
+	rng := rand.New(rand.NewSource(42))
+	recSets := sliceRecs(rng, allRecs)
+	evalFunc := func(nn *deep.Neural, debug io.Writer) float64 {
+		scores := make(sort.Float64Slice, len(recSets))
+		for i, recSet := range recSets {
+			scores[i] = simulateRun(nn, recSet, debug)
+		}
+		// median
+		sort.Sort(scores)
+		return (scores[len(scores)/2] + scores[len(scores)/2-1]) / 2
+	}
+	train(ncfg, evalFunc, rng)
+}
 
-	recs, err = getRecords(tier, "matches")
-	if err != nil {
-		log.Fatalln("error:", err)
+func sliceRecs(rng *rand.Rand, recs []*matchRecord) [][]*matchRecord {
+	k := int(math.Sqrt(float64(len(recs))) - 1)
+	sliceCount := k
+	sliceSize := k
+	recSets := make([][]*matchRecord, sliceCount)
+	for i := range recSets {
+		rng.Shuffle(len(recs), func(j, k int) {
+			recs[j], recs[k] = recs[k], recs[j]
+		})
+		recSet := make([]*matchRecord, sliceSize)
+		copy(recSet, recs)
+		recSets[i] = recSet
 	}
-	chars.Update(recs)
-	stride := 25
-	width := 100
-	for baseBet := 0.20; baseBet <= 0.80; baseBet += 0.20 {
-		for z := 0; z+width <= len(recs); z += stride {
-			var results sort.Float64Slice
-			for x := 0; x < 10000; x++ {
-				selected := recs[z : z+width]
-				rand.Shuffle(len(selected), func(i, j int) { selected[i], selected[j] = selected[j], selected[i] })
-				result := simulateRun(baseBet, chars, nn, recs[z:z+width])
-				//log.Printf("%3d %.2f %f", z, baseBet, result)
-				results = append(results, result)
-			}
-			sort.Sort(results)
-			median := results[len(results)/2]
-			if len(results)%2 == 0 {
-				median = (median + results[len(results)/2-1]) / 2
-			}
-			fmt.Printf("%.2f,%f\n", baseBet, median)
-		}
-	}
+	return recSets
 }

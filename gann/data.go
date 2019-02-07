@@ -15,14 +15,15 @@ const (
 // records
 
 type matchRecord struct {
+	Tier     string
 	Name     [2]string
 	Pot      [2]int64
 	Winner   int
 	Duration int
 }
 
-func newRecord(winner, loser string, winpot, losepot int64, duration int) *matchRecord {
-	r := &matchRecord{[2]string{winner, loser}, [2]int64{winpot, losepot}, 0, duration}
+func newRecord(tier, winner, loser string, winpot, losepot int64, duration int) *matchRecord {
+	r := &matchRecord{tier, [2]string{winner, loser}, [2]int64{winpot, losepot}, 0, duration}
 	if winner < loser {
 		r.Name[0], r.Name[1] = r.Name[1], r.Name[0]
 		r.Pot[0], r.Pot[1] = r.Pot[1], r.Pot[0]
@@ -41,7 +42,8 @@ func (r *matchRecord) Response() []float64 {
 	return response
 }
 
-func getRecords(tier, table string) ([]*matchRecord, error) {
+func getRecords(table string) (map[string][]*matchRecord, error) {
+	tierRecs := make(map[string][]*matchRecord)
 	cfg, err := pgx.ParseConnectionString(viper.GetString("db.url"))
 	if err != nil {
 		return nil, err
@@ -51,22 +53,27 @@ func getRecords(tier, table string) ([]*matchRecord, error) {
 		return nil, err
 	}
 	defer conn.Close()
-	rows, err := conn.Query("SELECT winner, loser, winpot, losepot, duration FROM "+table+" WHERE mode = 'matchmaking' AND tier = $1", tier)
+	rows, err := conn.Query("SELECT tier, winner, loser, winpot, losepot, duration FROM " + table + " WHERE mode = 'matchmaking'")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var recs []*matchRecord
 	for rows.Next() {
-		var winner, loser string
+		var tier, winner, loser string
 		var winpot, losepot int64
 		var duration int
-		if err := rows.Scan(&winner, &loser, &winpot, &losepot, &duration); err != nil {
+		if err := rows.Scan(&tier, &winner, &loser, &winpot, &losepot, &duration); err != nil {
 			return nil, err
 		}
-		recs = append(recs, newRecord(winner, loser, winpot, losepot, duration))
+		if winpot == 0 || losepot == 0 || duration == 0 {
+			continue
+		}
+		if _, ok := tierIdx[tier]; !ok {
+			continue
+		}
+		tierRecs[tier] = append(tierRecs[tier], newRecord(tier, winner, loser, winpot, losepot, duration))
 	}
-	return recs, rows.Err()
+	return tierRecs, rows.Err()
 }
 
 // stats
