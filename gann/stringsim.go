@@ -70,14 +70,17 @@ func fmtVec(x []float64) string {
 }
 
 func (d *tierData) BetVector(rec *matchRecord) []float64 {
-	a, b := rec.Name[0], rec.Name[1]
-	astat := d.chars[a]
-	bstat := d.chars[b]
-	rateDelta := astat.WinRate() - bstat.WinRate()
-	eloDelta := bstat.Elo - astat.Elo
-	pred := d.Predict(a, b)
-	tier := float64(tierIdx[rec.Tier])
-	return []float64{rateDelta, eloDelta, pred[0], pred[1], tier}
+	rec.bvo.Do(func() {
+		a, b := rec.Name[0], rec.Name[1]
+		astat := d.chars[a]
+		bstat := d.chars[b]
+		rateDelta := astat.WinRate() - bstat.WinRate()
+		eloDelta := bstat.Elo - astat.Elo
+		pred := d.Predict(a, b)
+		tier := float64(tierIdx[rec.Tier])
+		rec.bvc = []float64{rateDelta, eloDelta, pred[0], pred[1], tier}
+	})
+	return rec.bvc
 }
 
 const betVectorSize = 5

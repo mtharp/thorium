@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"math/rand"
@@ -13,12 +14,11 @@ import (
 )
 
 const (
-	generations = 1000
-	population  = 24
+	generations = 99999999
+	population  = 144
 	eliteSelect = 4
-	tournSelect = 18
 	mutateMin   = 0.5
-	mutateMax   = 15.0
+	mutateMax   = 10.0
 	superMutant = 20.0
 )
 
@@ -99,6 +99,13 @@ func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand) *deep.Neural {
 		}
 		pop = nn2
 		log.Printf("%d %f", gen, scores[0].score)
+		blob, err := nn2[0].Marshal()
+		if err != nil {
+			log.Fatalln("error:", err)
+		}
+		if err := ioutil.WriteFile("bettor.dat", blob, 0644); err != nil {
+			log.Fatalln("error:", err)
+		}
 	}
 	return pop[0]
 }

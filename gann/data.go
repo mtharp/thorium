@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"sync"
 
 	"github.com/jackc/pgx"
 	"github.com/spf13/viper"
@@ -20,10 +21,19 @@ type matchRecord struct {
 	Pot      [2]int64
 	Winner   int
 	Duration int
+
+	bvo sync.Once
+	bvc []float64
 }
 
 func newRecord(tier, winner, loser string, winpot, losepot int64, duration int) *matchRecord {
-	r := &matchRecord{tier, [2]string{winner, loser}, [2]int64{winpot, losepot}, 0, duration}
+	r := &matchRecord{
+		Tier:     tier,
+		Name:     [2]string{winner, loser},
+		Pot:      [2]int64{winpot, losepot},
+		Winner:   0,
+		Duration: duration,
+	}
 	if winner < loser {
 		r.Name[0], r.Name[1] = r.Name[1], r.Name[0]
 		r.Pot[0], r.Pot[1] = r.Pot[1], r.Pot[0]
@@ -53,7 +63,7 @@ func getRecords(table string) (map[string][]*matchRecord, error) {
 		return nil, err
 	}
 	defer conn.Close()
-	rows, err := conn.Query("SELECT tier, winner, loser, winpot, losepot, duration FROM " + table + " WHERE mode = 'matchmaking'")
+	rows, err := conn.Query("SELECT tier, winner, loser, winpot, losepot, duration FROM " + table + " WHERE mode = 'matchmaking' ORDER BY ts")
 	if err != nil {
 		return nil, err
 	}
