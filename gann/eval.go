@@ -2,9 +2,11 @@ package main
 
 import (
 	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"math/rand"
+	"os"
 	"sort"
 	"sync"
 
@@ -37,7 +39,13 @@ func main() {
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalln("error:", err)
 	}
-	tierRecs, err := getRecords("imported_matches")
+	var training bool
+	table := "all_matches"
+	if len(os.Args) > 1 {
+		training = true
+		table = "imported_matches"
+	}
+	tierRecs, err := getRecords(table)
 	if err != nil {
 		log.Fatalln("error:", err)
 	}
@@ -53,25 +61,38 @@ func main() {
 		}
 		tiers[i] = d
 	}
-	ncfg := &deep.Config{
-		Inputs:     betVectorSize,
-		Layout:     []int{6, 4, 2},
-		Activation: deep.ActivationSigmoid,
-		Mode:       deep.ModeRegression,
-		Weight:     deep.NewNormal(100.0, 0.0),
-	}
-	rng := rand.New(rand.NewSource(42))
-	recSets := sliceRecs(rng, allRecs)
-	evalFunc := func(nn *deep.Neural, debug io.Writer) float64 {
-		scores := make(sort.Float64Slice, len(recSets))
-		for i, recSet := range recSets {
-			scores[i] = simulateRun(nn, recSet, debug)
+	var bnn *deep.Neural
+	if training {
+		ncfg := &deep.Config{
+			Inputs:     betVectorSize,
+			Layout:     []int{6, 4, 2},
+			Activation: deep.ActivationSigmoid,
+			Mode:       deep.ModeRegression,
+			Weight:     deep.NewNormal(100.0, 0.0),
 		}
-		// median
-		sort.Sort(scores)
-		return (scores[len(scores)/2] + scores[len(scores)/2-1]) / 2
+		rng := rand.New(rand.NewSource(42))
+		recSets := sliceRecs(rng, allRecs)
+		evalFunc := func(nn *deep.Neural, debug io.Writer) float64 {
+			scores := make(sort.Float64Slice, len(recSets))
+			for i, recSet := range recSets {
+				scores[i] = simulateRun(nn, recSet, debug)
+			}
+			// median
+			sort.Sort(scores)
+			return (scores[len(scores)/2] + scores[len(scores)/2-1]) / 2
+		}
+		bnn = train(ncfg, evalFunc, rng)
+	} else {
+		blob, err := ioutil.ReadFile("bettor.dat")
+		if err != nil {
+			log.Fatalln("error:", err)
+		}
+		bnn, err = deep.Unmarshal(blob)
+		if err != nil {
+			log.Fatalln("error:", err)
+		}
 	}
-	train(ncfg, evalFunc, rng)
+	watchAndRun(bnn)
 }
 
 func sliceRecs(rng *rand.Rand, recs []*matchRecord) [][]*matchRecord {

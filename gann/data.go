@@ -42,6 +42,13 @@ func newRecord(tier, winner, loser string, winpot, losepot int64, duration int) 
 	return r
 }
 
+func newLiveRecord(tier, a, b string) *matchRecord {
+	if a > b {
+		a, b = b, a
+	}
+	return &matchRecord{Tier: tier, Name: [2]string{a, b}}
+}
+
 func (r *matchRecord) Payoff(wager float64) float64 {
 	return wager * float64(r.Pot[1-r.Winner]) / float64(r.Pot[r.Winner])
 }
