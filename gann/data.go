@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx"
 	"github.com/spf13/viper"
@@ -59,28 +60,29 @@ func (r *matchRecord) Response() []float64 {
 	return response
 }
 
-func getRecords(table string) (map[string][]*matchRecord, error) {
-	tierRecs := make(map[string][]*matchRecord)
+func getRecords(table string, since time.Time) (tierRecs map[string][]*matchRecord, ts time.Time, err error) {
+	tierRecs = make(map[string][]*matchRecord)
 	cfg, err := pgx.ParseConnectionString(viper.GetString("db.url"))
 	if err != nil {
-		return nil, err
+		return
 	}
 	conn, err := pgx.Connect(cfg)
 	if err != nil {
-		return nil, err
+		return
 	}
 	defer conn.Close()
-	rows, err := conn.Query("SELECT tier, winner, loser, winpot, losepot, duration FROM " + table + " WHERE mode = 'matchmaking' ORDER BY ts")
+	rows, err := conn.Query("SELECT ts, tier, winner, loser, winpot, losepot, duration FROM "+table+" WHERE mode = 'matchmaking' AND ts > $1 ORDER BY ts", since)
 	if err != nil {
-		return nil, err
+		return
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var tier, winner, loser string
 		var winpot, losepot int64
 		var duration int
-		if err := rows.Scan(&tier, &winner, &loser, &winpot, &losepot, &duration); err != nil {
-			return nil, err
+		var recTS time.Time
+		if err = rows.Scan(&recTS, &tier, &winner, &loser, &winpot, &losepot, &duration); err != nil {
+			return
 		}
 		if winpot == 0 || losepot == 0 || duration == 0 {
 			continue
@@ -89,8 +91,12 @@ func getRecords(table string) (map[string][]*matchRecord, error) {
 			continue
 		}
 		tierRecs[tier] = append(tierRecs[tier], newRecord(tier, winner, loser, winpot, losepot, duration))
+		if recTS.After(ts) {
+			ts = recTS
+		}
 	}
-	return tierRecs, rows.Err()
+	err = rows.Err()
+	return
 }
 
 // stats

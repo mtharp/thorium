@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	deep "github.com/patrikeh/go-deep"
 	"github.com/spf13/viper"
@@ -45,7 +46,7 @@ func main() {
 		training = true
 		table = "imported_matches"
 	}
-	tierRecs, err := getRecords(table)
+	tierRecs, ts, err := getRecords(table, time.Time{})
 	if err != nil {
 		log.Fatalln("error:", err)
 	}
@@ -92,7 +93,7 @@ func main() {
 			log.Fatalln("error:", err)
 		}
 	}
-	watchAndRun(bnn)
+	watchAndRun(bnn, ts)
 }
 
 func sliceRecs(rng *rand.Rand, recs []*matchRecord) [][]*matchRecord {

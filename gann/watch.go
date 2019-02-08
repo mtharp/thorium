@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func watchAndRun(nn *deep.Neural) {
+func watchAndRun(nn *deep.Neural, ts time.Time) {
 	var p1name, p2name string
 	var mst struct{ P1, P2, Tier, Mode string }
 	var failures int
@@ -68,6 +68,20 @@ func watchAndRun(nn *deep.Neural) {
 			}
 			bankChanged = false
 		}
+		// update character data
+		tierRecs, ts2, err := getRecords("matches", ts)
+		if err != nil {
+			log.Printf("error: fetching new match records: %s", err)
+		} else {
+			for tier, recs := range tierRecs {
+				tiers[tierIdx[tier]].chars.Update(recs)
+				log.Printf("Added %d match record(s) to tier %s", len(recs), tier)
+			}
+			if ts2.After(ts) {
+				ts = ts2
+			}
+		}
+
 		idx, ok := tierIdx[mst.Tier]
 		if !ok {
 			continue
@@ -98,6 +112,9 @@ func watchAndRun(nn *deep.Neural) {
 		wager := bank * baseBet * wk
 		if !isTourn {
 			wager /= 10
+		}
+		if mst.Mode == "exhibitions" {
+			wager /= 3
 		}
 		bailout := 100.0
 		failsafe := 100000.0 // never all-in more than 100k
