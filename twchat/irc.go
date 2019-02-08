@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -86,6 +89,12 @@ func runIRC(ts oauth2.TokenSource) error {
 			}
 			log.Printf("bets open: red=%s blue=%s tier=%s mode=%s", m[1], m[2], m[3], mr.Mode)
 			status = "open"
+			mst := struct {
+				P1, P2, Tier, Mode string
+			}{m[1], m[2], m[3], mr.Mode}
+			blob, _ := json.Marshal(mst)
+			ioutil.WriteFile("/tmp/mstate.json.tmp", blob, 0644)
+			os.Rename("/tmp/mstate.json.tmp", "/tmp/mstate.json")
 		} else if m := lineClosed.FindStringSubmatch(text); m != nil {
 			log.Printf("bets locked: streakRed=%s potRed=%s streakBlue=%s potBlue=%s", m[1], m[2], m[3], m[4])
 			if status == "open" {
