@@ -35,6 +35,9 @@ const (
 	tournBailout   = 1000 + defaultBailout
 )
 
+// consensus
+const consensusNets = 13
+
 var (
 	predCfg = &deep.Config{
 		Layout:     []int{5, 3, predResponseSize},

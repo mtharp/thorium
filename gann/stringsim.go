@@ -22,16 +22,16 @@ func simulateBailout(nn *deep.Neural, recs []*matchRecord) (score float64) {
 	for _, rec := range recs {
 		// predict
 		d := tiers[tierIdx[rec.Tier]]
-		betSize, predictB := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
+		wg := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
 		// wager
-		wager := bank * baseBet * betSize
+		wager := bank * baseBet * wg.Size()
 		if bank-wager < simBailout || wager > bank {
 			wager = bank
 		}
 		// outcome
 		change := -wager
 		//res := "lose"
-		if (rec.Winner == 1) == predictB {
+		if (rec.Winner == 1) == wg.PredictB() {
 			// win
 			change = rec.Payoff(wager)
 			//res = "win"
@@ -54,16 +54,16 @@ func simulateWhale(nn *deep.Neural, recs []*matchRecord) (score float64) {
 	for _, rec := range recs {
 		// predict
 		d := tiers[tierIdx[rec.Tier]]
-		betSize, predictB := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
+		wg := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
 		// wager
-		wager := bank * baseBet * betSize
+		wager := bank * baseBet * wg.Size()
 		if bank-wager < simBailout || wager > bank {
 			wager = bank
 		}
 		// outcome
 		change := -wager
 		//res := "lose"
-		if (rec.Winner == 1) == predictB {
+		if (rec.Winner == 1) == wg.PredictB() {
 			// win
 			change = rec.Payoff(wager)
 			//res = "win"
@@ -86,31 +86,6 @@ func fmtVec(x []float64) string {
 		w = append(w, fmt.Sprintf("%0.3f", y))
 	}
 	return strings.Join(w, " ")
-}
-
-func wagerFromVector(o []float64) (betSize float64, predictB bool) {
-	switch len(o) {
-	case 2:
-		j, k := o[0], o[1]
-		betSize = j
-		if k > j {
-			betSize = k
-			predictB = true
-		}
-	case 1:
-		betSize = o[0]
-		if betSize > 0 {
-			predictB = true
-		} else {
-			betSize = -betSize
-		}
-	default:
-		panic("invalid output size")
-	}
-	if betSize < 0.002 {
-		betSize = 0
-	}
-	return
 }
 
 func (d *tierData) BetVector(rec *matchRecord, bank float64) []float64 {

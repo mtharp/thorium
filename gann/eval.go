@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -44,11 +42,15 @@ func main() {
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalln("error:", err)
 	}
-	var training bool
+	var training, meta bool
 	table := "all_matches"
 	if len(os.Args) > 1 {
 		training = true
-		table = "imported_matches"
+		if os.Args[1] == "meta" {
+			meta = true
+		} else {
+			table = "imported_matches"
+		}
 	}
 	tierRecs, ts, err := getRecords(table, time.Time{})
 	if err != nil {
@@ -66,49 +68,19 @@ func main() {
 		}
 		tiers[i] = d
 	}
-	var bnn *deep.Neural
 	if training {
 		var startPop []*deep.Neural
 		var seed int64 = 42
-		outDir := "_bnet"
-		if os.Args[1] == "meta" {
-			seed *= 69
-			f, err := os.Open(outDir)
+		workDir := "_bnet"
+		if meta {
+			seed = time.Now().UnixNano()
+			startPop, err = netsFromFiles(workDir, population)
 			if err != nil {
 				log.Fatalln("error:", err)
 			}
-			names, err := f.Readdirnames(-1)
-			if err != nil {
-				log.Fatalln("error:", err)
-			}
-			type fileScore struct {
-				name  string
-				score float64
-			}
-			var scores []fileScore
-			for _, name := range names {
-				score, _ := strconv.ParseInt(strings.Split(name, ".")[0], 10, 64)
-				scores = append(scores, fileScore{name, float64(score)})
-			}
-			sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
-			if len(scores) > population {
-				scores = scores[:population]
-			}
-			for _, score := range scores {
-				blob, err := ioutil.ReadFile(filepath.Join("_bnet", score.name))
-				if err != nil {
-					log.Fatalln("error:", err)
-				}
-				nn, err := deep.Unmarshal(blob)
-				if err != nil {
-					log.Fatalln("error:", err)
-				}
-				startPop = append(startPop, nn)
-			}
-			log.Printf("seeded with %d nets with scores %s - %s", len(startPop), fmtNum(scores[0].score), fmtNum(scores[len(scores)-1].score))
-			outDir = "_meta"
+			workDir = "_meta"
 		}
-		if err := os.MkdirAll(outDir, 0755); err != nil {
+		if err := os.MkdirAll(workDir, 0755); err != nil {
 			log.Fatalln("error:", err)
 		}
 		rng := rand.New(rand.NewSource(seed))
@@ -126,40 +98,19 @@ func main() {
 			nn, score := train(betCfg, evalFunc, rng, startPop)
 			if score > 100e9 {
 				blob, _ := nn.Marshal()
-				ioutil.WriteFile(filepath.Join(outDir, fmt.Sprintf("%d.%d.dat", int64(score), time.Now().Unix())), blob, 0644)
+				ioutil.WriteFile(filepath.Join(workDir, fmt.Sprintf("%d.%d.dat", int64(score), time.Now().Unix())), blob, 0644)
+			}
+			if meta {
+				rng = rand.New(rand.NewSource(rng.Int63()))
+				recSets = sliceRecs(rng, allRecs)
 			}
 		}
 	} else {
-		f, err := os.Open("_meta")
+		nns, err := netsFromFiles("_bnet", consensusNets)
 		if err != nil {
 			log.Fatalln("error:", err)
 		}
-		names, err := f.Readdirnames(-1)
-		if err != nil {
-			log.Fatalln("error:", err)
-		}
-		var bestScore int64
-		var bestName string
-		for _, name := range names {
-			score, _ := strconv.ParseInt(strings.Split(name, ".")[0], 10, 64)
-			if score > bestScore {
-				bestScore = score
-				bestName = name
-			}
-		}
-		if bestName == "" {
-			log.Fatalln("no files")
-		}
-		blob, err := ioutil.ReadFile(filepath.Join("_meta", bestName))
-		if err != nil {
-			log.Fatalln("error:", err)
-		}
-		bnn, err = deep.Unmarshal(blob)
-		if err != nil {
-			log.Fatalln("error:", err)
-		}
-		log.Printf("using _meta/%s score=%s", bestName, fmtNum(float64(bestScore)))
-		watchAndRun(bnn, ts)
+		watchAndRun(nns, ts)
 	}
 }
 

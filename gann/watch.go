@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func watchAndRun(nn *deep.Neural, ts time.Time) {
+func watchAndRun(nns []*deep.Neural, ts time.Time) {
 	var p1name, p2name string
 	var mst struct{ P1, P2, Tier, Mode string }
 	var failures int
@@ -98,13 +98,18 @@ func watchAndRun(nn *deep.Neural, ts time.Time) {
 			continue
 		}
 		rec := newLiveRecord(mst.Tier, p1name, p2name)
-		betSize, bWins := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
-		if betSize < 0.002 {
-			log.Printf("low confidence")
+		v := d.BetVector(rec, bank)
+		wl := make(wagerList, len(nns))
+		for i, nn := range nns {
+			wl[i] = wagerFromVector(nn.Predict(v))
+		}
+		wg := wl.Consensus()
+		if wg.Size() < 0.002 {
+			log.Printf("too close to call")
 			continue
 		}
 
-		wager := bank * baseBet * betSize
+		wager := bank * baseBet * wg.Size()
 		log.Printf("base bet %f", wager)
 		bailout := float64(defaultBailout)
 		switch mst.Mode {
@@ -126,7 +131,7 @@ func watchAndRun(nn *deep.Neural, ts time.Time) {
 		}
 		log.Printf("adjusted %f", wager)
 		idx = 0
-		if bWins {
+		if wg.PredictB() {
 			idx = 1
 		}
 		iwager := int(wager)
