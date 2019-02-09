@@ -13,15 +13,6 @@ import (
 	deep "github.com/patrikeh/go-deep"
 )
 
-const (
-	generations = 99999999
-	population  = 144
-	eliteSelect = 4
-	mutateMin   = 0.5
-	mutateMax   = 10.0
-	superMutant = 20.0
-)
-
 type evalFunc func(nn *deep.Neural, debug io.Writer) float64
 
 type score struct {
@@ -44,16 +35,19 @@ func (l scoreList) Swap(i, j int) {
 	l[i], l[j] = l[j], l[i]
 }
 
-func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand) *deep.Neural {
-	pop := make([]*deep.Neural, population)
-	for i := range pop {
-		pop[i] = deep.NewNeural(ncfg)
+func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand, pop []*deep.Neural) (*deep.Neural, float64) {
+	meta := pop != nil
+	if !meta {
+		pop = make([]*deep.Neural, population)
+		for i := 0; i < population; i++ {
+			pop[i] = deep.NewNeural(ncfg)
+		}
 	}
-	mutateMaxGen := mutateMax
-	var genScores []float64
-	for gen := 0; gen < generations; gen++ {
-		scores := make(scoreList, 0, population)
-		sch := make(chan score, population)
+	var prevScores [termStride]float64
+	var lastScore float64
+	for gen := 0; ; gen++ {
+		scores := make(scoreList, 0, len(pop))
+		sch := make(chan score, len(pop))
 		for _, nn := range pop {
 			nn := nn
 			go func() {
@@ -64,7 +58,7 @@ func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand) *deep.Neural {
 				sch <- nscore
 			}()
 		}
-		for i := 0; i < population; i++ {
+		for i := 0; i < len(pop); i++ {
 			scores = append(scores, <-sch)
 		}
 		sort.Sort(scores)
@@ -73,32 +67,38 @@ func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand) *deep.Neural {
 				log.Printf("%f %p", nscore.score, nscore.nn)
 			}
 		}
+		best := scores[0].score
+		if prevScores[0] != 0 {
+			if best < prevScores[0] {
+				log.Fatalln("score regressed -- data race?")
+			}
+			pprev := prevScores[termStride-1]
+			minGen := termMinGen
+			if meta {
+				minGen = termMetaGen
+			}
+			if gen >= minGen-1 && (best-pprev)/pprev < termSlope {
+				log.Printf("terminating after %d generations - score %s", gen+1, fmtNum(best))
+				return scores[0].nn, best
+			}
+		}
+		copy(prevScores[1:], prevScores[:])
+		prevScores[0] = best
 		nn2 := make([]*deep.Neural, eliteSelect, population)
+
 		for i := 0; i < eliteSelect; i++ {
 			nn2[i] = scores[i].nn
 		}
-		genScores = append(genScores, scores[0].score)
 		for len(nn2) < population {
-			// pick a random pair but heavily prefer the highest scoring ones
-			k := int(float64(len(scores)-2) * math.Pow(rng.Float64(), 3))
-			if k > population-2 {
-				k = population - 2
-			}
-			p1, p2 := scores[k].nn, scores[k+1].nn
-			sigma := mutateMin
-			if len(genScores) > 5 && genScores[len(genScores)-4] == scores[0].score {
-				mutateMaxGen++
-			}
-			if len(nn2) > population*3/4 {
-				sigma = mutateMaxGen
-			}
-			if len(nn2) == population-1 {
-				sigma *= superMutant
-			}
+			p1 := selectParent(rng, scores, nil)
+			p2 := selectParent(rng, scores, p1)
+			// increase mutation sharply towards the end of the population
+			j := math.Pow(float64(len(nn2)-eliteSelect)/float64(len(pop)-eliteSelect), 3)
+			sigma := mutateMin + j*(mutateMax-mutateMin)
 			nn2 = append(nn2, cross(rng, sigma, p1, p2))
 		}
 		pop = nn2
-		log.Printf("%d %f", gen, scores[0].score)
+		log.Printf("%d %s", gen, fmtNum(best))
 		blob, err := nn2[0].Marshal()
 		if err != nil {
 			log.Fatalln("error:", err)
@@ -107,7 +107,23 @@ func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand) *deep.Neural {
 			log.Fatalln("error:", err)
 		}
 	}
-	return pop[0]
+	return pop[0], lastScore
+}
+
+func selectParent(rng *rand.Rand, scores scoreList, otherParent *deep.Neural) *deep.Neural {
+	// pick a random individual but heavily prefer the highest scoring ones
+	k := int(float64(len(scores)-1) * math.Pow(rng.Float64(), 3))
+	if k > len(scores)-1 {
+		k = len(scores) - 1
+	}
+	p := scores[k].nn
+	if p == otherParent {
+		if k == 0 {
+			return scores[1].nn
+		}
+		return scores[k-1].nn
+	}
+	return scores[k].nn
 }
 
 func cross(rng *rand.Rand, sigma float64, p1, p2 *deep.Neural) *deep.Neural {
@@ -147,4 +163,19 @@ func fmtNet(nn *deep.Neural) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+func fmtNum(n float64) string {
+	switch {
+	case n > 1e12:
+		return fmt.Sprintf("%.1ft", n/1e12)
+	case n > 1e9:
+		return fmt.Sprintf("%.1fb", n/1e9)
+	case n > 1e6:
+		return fmt.Sprintf("%.1fm", n/1e6)
+	case n > 1e3:
+		return fmt.Sprintf("%.1fk", n/1e3)
+	default:
+		return fmt.Sprintf("%.1f", n)
+	}
 }

@@ -29,7 +29,7 @@ func watchAndRun(nn *deep.Neural, ts time.Time) {
 		log.Fatalln("error:", err)
 	}
 	log.Printf("scraped uid=%s bank=%f", uid, bank)
-	var bankChanged bool
+	var bankChanged, modeChanged bool
 	lastMode := ""
 	for {
 		// wait for tier info
@@ -41,7 +41,8 @@ func watchAndRun(nn *deep.Neural, ts time.Time) {
 		}
 		p1name = mst.P1
 		p2name = mst.P2
-		if lastMode != "" && lastMode != mst.Mode {
+		modeChanged = lastMode != "" && lastMode != mst.Mode
+		if modeChanged {
 			bankChanged = true
 		}
 		lastMode = mst.Mode
@@ -97,36 +98,46 @@ func watchAndRun(nn *deep.Neural, ts time.Time) {
 			continue
 		}
 		rec := newLiveRecord(mst.Tier, p1name, p2name)
-		o := nn.Predict(d.BetVector(rec))
-		j, k := o[0], o[1]
-		wk := j
-		if k > j {
-			wk = k
-		}
-		if wk < 0 {
-			log.Printf("not touching this one")
+		betSize, bWins := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
+		if betSize < 0.002 {
+			log.Printf("low confidence")
 			continue
 		}
 
-		isTourn := mst.Mode == "tournament"
-		wager := bank * baseBet * wk
-		if !isTourn {
-			wager /= 10
+		wager := bank * baseBet * betSize
+		log.Printf("base bet %f", wager)
+		bailout := float64(defaultBailout)
+		switch mst.Mode {
+		case "matchmaking":
+			wager *= mmScale
+		case "exhibitions":
+			wager *= exhibScale
+		case "tournament":
+			bailout = tournBailout
+		default:
+			log.Printf("unknown mode %q", mst.Mode)
+			continue
 		}
-		if mst.Mode == "exhibitions" {
-			wager /= 3
-		}
-		bailout := 100.0
-		failsafe := 100000.0 // never all-in more than 100k
-		if (bank-wager < bailout || wager > bank) && bank < failsafe {
+		if bank-wager < bailout || wager > bank || bank < alwaysAllIn {
 			wager = bank
 		}
+		if wager > maxBet {
+			wager = maxBet
+		}
+		log.Printf("adjusted %f", wager)
 		idx = 0
-		if k > j {
+		if bWins {
 			idx = 1
 		}
 		iwager := int(wager)
-		log.Printf("Placing %dk on %q", iwager/1000, rec.Name[idx])
+		dwager := iwager
+		suffix := ""
+		if iwager >= 10000 {
+			dwager /= 1000
+			suffix = "k"
+		}
+		log.Printf("Placing %d%s on %q", dwager, suffix, rec.Name[idx])
+		//continue
 		var p int
 		if rec.Name[idx] == p1name {
 			p = 1

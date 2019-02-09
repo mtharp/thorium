@@ -55,9 +55,20 @@ func (r *matchRecord) Payoff(wager float64) float64 {
 }
 
 func (r *matchRecord) Response() []float64 {
-	response := []float64{0.0, 0.0}
-	response[r.Winner] = 1.0
-	return response
+	switch predResponseSize {
+	case 1:
+		if r.Winner == 1 {
+			return []float64{1.0}
+		} else {
+			return []float64{-1.0}
+		}
+	case 2:
+		response := []float64{0.0, 0.0}
+		response[r.Winner] = 1.0
+		return response
+	default:
+		panic("nah")
+	}
 }
 
 func getRecords(table string, since time.Time) (tierRecs map[string][]*matchRecord, ts time.Time, err error) {

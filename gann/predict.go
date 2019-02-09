@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"io/ioutil"
 	"os"
@@ -18,7 +20,12 @@ var predGens = map[string]int{
 	"X": 10000,
 }
 
-func (d *tierData) makePredictor(filename string) error {
+func (d *tierData) makePredictor(tier string) error {
+	predCfg.Inputs = len(d.chars.PredVector(d.recs[0]))
+	filename := "_pnet/" + digestConfig(tier, predCfg) + ".dat"
+	if err := os.MkdirAll("_pnet", 0755); err != nil {
+		return err
+	}
 	blob, err := ioutil.ReadFile(filename)
 	if err == nil {
 		dump := new(deep.Dump)
@@ -37,14 +44,10 @@ func (d *tierData) makePredictor(filename string) error {
 			Response: rec.Response(),
 		}
 	}
-	nn := deep.NewNeural(&deep.Config{
-		Inputs:     len(e[0].Input),
-		Layout:     []int{5, 3, len(e[0].Response)},
-		Activation: deep.ActivationSigmoid,
-		Mode:       deep.ModeMultiClass,
-		Weight:     deep.NewNormal(1.0, 0.0),
-		Bias:       true,
-	})
+	if len(e[0].Response) != predResponseSize {
+		panic("fix predResponseSize")
+	}
+	nn := deep.NewNeural(predCfg)
 	optimizer := training.NewAdam(0.001, 0.9, 0.999, 1e-8)
 	trainer := training.NewBatchTrainer(optimizer, 1, 200, runtime.GOMAXPROCS(0))
 	x, y := e.Split(0.75)
@@ -60,6 +63,17 @@ func (d *tierData) makePredictor(filename string) error {
 	}
 	d.setPred(dump)
 	return nil
+}
+
+func digestConfig(tier string, ncfg *deep.Config) string {
+	v := struct {
+		Tier   string
+		Neural *deep.Config
+	}{tier, ncfg}
+	cfgblob, _ := json.Marshal(v)
+	d := sha1.New()
+	d.Write(cfgblob)
+	return hex.EncodeToString(d.Sum(nil))
 }
 
 func leastGames(astat, bstat *charStats) float64 {
