@@ -48,11 +48,16 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 		lastMode = mst.Mode
 		// update bank
 		if bankChanged {
-			zbank, err := getBank(cli, uid)
-			if err != nil {
-				log.Printf("error: %s", err)
-				failures++
-				continue
+			var zbank float64
+			if modeChanged {
+				time.Sleep(3 * time.Second)
+			} else {
+				zbank, err = getBank(cli, uid)
+				if err != nil {
+					log.Printf("error: %s", err)
+					failures++
+					continue
+				}
 			}
 			if zbank <= 0 {
 				_, sbank, err := scrapeHome(cli)
@@ -98,7 +103,7 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 			continue
 		}
 		rec := newLiveRecord(mst.Tier, p1name, p2name)
-		v := d.BetVector(rec, bank)
+		v := d.BetVector(rec)
 		wl := make(wagerList, len(nns))
 		for i, nn := range nns {
 			wl[i] = wagerFromVector(nn.Predict(v))
@@ -115,10 +120,11 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 		switch mst.Mode {
 		case "matchmaking":
 			wager *= mmScale
-		case "exhibitions":
-			wager *= exhibScale
 		case "tournament":
 			bailout = tournBailout
+		case "exhibitions":
+			log.Printf("exhibs are for suckers")
+			continue
 		default:
 			log.Printf("unknown mode %q", mst.Mode)
 			continue

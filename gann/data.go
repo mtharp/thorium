@@ -116,6 +116,7 @@ type charStats struct {
 	Wins, Losses      float64
 	WinTime, LoseTime float64
 	Elo               float64
+	Favor             float64
 }
 
 func (s *charStats) AvgWinTime() float64 {
@@ -136,6 +137,10 @@ func (s *charStats) WinRate() float64 {
 	return s.Wins / (s.Wins + s.Losses)
 }
 
+func (s *charStats) CrowdFavor() float64 {
+	return s.Favor / (s.Wins + s.Losses)
+}
+
 type charStatsMap map[string]*charStats
 
 func (m charStatsMap) Update(recs []*matchRecord) {
@@ -152,6 +157,10 @@ func (m charStatsMap) Update(recs []*matchRecord) {
 		swin.WinTime += float64(rec.Duration)
 		slose.Losses++
 		slose.LoseTime += float64(rec.Duration)
+
+		winpot, losepot := float64(rec.Pot[rec.Winner]), float64(rec.Pot[1-rec.Winner])
+		swin.Favor = winpot / losepot
+		slose.Favor = losepot / winpot
 
 		expected := 1 / (1 + math.Pow(10, (slose.Elo-swin.Elo)/400))
 		change := kFactor * (1 - expected)

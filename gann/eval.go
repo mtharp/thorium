@@ -48,8 +48,6 @@ func main() {
 		training = true
 		if os.Args[1] == "meta" {
 			meta = true
-		} else {
-			table = "imported_matches"
 		}
 	}
 	tierRecs, ts, err := getRecords(table, time.Time{})
@@ -83,30 +81,34 @@ func main() {
 		if err := os.MkdirAll(workDir, 0755); err != nil {
 			log.Fatalln("error:", err)
 		}
-		rng := rand.New(rand.NewSource(seed))
-		recSets := sliceRecs(rng, allRecs)
-		evalFunc := func(nn *deep.Neural, debug io.Writer) float64 {
-			scores := make(sort.Float64Slice, len(recSets))
-			for i, recSet := range recSets {
-				scores[i] = simulateWhale(nn, recSet)
-			}
-			// median
-			sort.Sort(scores)
-			return (scores[len(scores)/2] + scores[len(scores)/2-1]) / 2
-		}
 		for {
-			nn, score := train(betCfg, evalFunc, rng, startPop)
+			rng := rand.New(rand.NewSource(seed))
+			recSets := sliceRecs(rng, allRecs)
+			evalFunc := func(nn *deep.Neural, debug io.Writer) float64 {
+				scores := make(sort.Float64Slice, len(recSets))
+				for i, recSet := range recSets {
+					scores[i] = simulateWhale(nn, recSet)
+				}
+				// median
+				sort.Sort(scores)
+				s := scores[len(scores)/2]
+				if len(scores)%2 == 0 {
+					s = (s + scores[len(scores)/2-1]) / 2
+				}
+				return s
+			}
+			var shuf shufFunc
+			if meta {
+				shuf = func() { recSets = sliceRecs(rng, allRecs) }
+			}
+			nn, score := train(betCfg, evalFunc, shuf, rng, startPop)
 			if score > 100e9 {
 				blob, _ := nn.Marshal()
 				ioutil.WriteFile(filepath.Join(workDir, fmt.Sprintf("%d.%d.dat", int64(score), time.Now().Unix())), blob, 0644)
 			}
-			if meta {
-				rng = rand.New(rand.NewSource(rng.Int63()))
-				recSets = sliceRecs(rng, allRecs)
-			}
 		}
 	} else {
-		nns, err := netsFromFiles("_bnet", consensusNets)
+		nns, err := netsFromFiles("_meta", consensusNets)
 		if err != nil {
 			log.Fatalln("error:", err)
 		}

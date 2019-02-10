@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math"
 	"math/rand"
@@ -14,6 +13,7 @@ import (
 )
 
 type evalFunc func(nn *deep.Neural, debug io.Writer) float64
+type shufFunc func()
 
 type score struct {
 	nn    *deep.Neural
@@ -35,7 +35,7 @@ func (l scoreList) Swap(i, j int) {
 	l[i], l[j] = l[j], l[i]
 }
 
-func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand, pop []*deep.Neural) (*deep.Neural, float64) {
+func train(ncfg *deep.Config, eval evalFunc, shuf shufFunc, rng *rand.Rand, pop []*deep.Neural) (*deep.Neural, float64) {
 	meta := pop != nil
 	if !meta {
 		pop = make([]*deep.Neural, population)
@@ -43,9 +43,15 @@ func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand, pop []*deep.Neural)
 			pop[i] = deep.NewNeural(ncfg)
 		}
 	}
-	var prevScores [termStride]float64
+	var prevScores [10]float64
 	var lastScore float64
 	for gen := 0; ; gen++ {
+		if gen != 0 && shuf != nil {
+			if gen >= metaMaxGen {
+				break
+			}
+			shuf()
+		}
 		scores := make(scoreList, 0, len(pop))
 		sch := make(chan score, len(pop))
 		for _, nn := range pop {
@@ -67,23 +73,20 @@ func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand, pop []*deep.Neural)
 				log.Printf("%f %p", nscore.score, nscore.nn)
 			}
 		}
-		best := scores[0].score
-		if prevScores[0] != 0 {
-			if best < prevScores[0] {
+		lastScore := scores[0].score
+		if prevScores[0] != 0 && shuf == nil {
+			if lastScore < prevScores[0] {
 				log.Fatalln("score regressed -- data race?")
 			}
 			pprev := prevScores[termStride-1]
 			minGen := termMinGen
-			if meta {
-				minGen = termMetaGen
-			}
-			if gen >= minGen-1 && (best-pprev)/pprev < termSlope {
-				log.Printf("terminating after %d generations - score %s", gen+1, fmtNum(best))
-				return scores[0].nn, best
+			if gen >= minGen-1 && (lastScore-pprev)/pprev < termSlope {
+				log.Printf("terminating after %d generations - score %s", gen+1, fmtNum(lastScore))
+				return scores[0].nn, lastScore
 			}
 		}
 		copy(prevScores[1:], prevScores[:])
-		prevScores[0] = best
+		prevScores[0] = lastScore
 		nn2 := make([]*deep.Neural, eliteSelect, population)
 
 		for i := 0; i < eliteSelect; i++ {
@@ -98,14 +101,15 @@ func train(ncfg *deep.Config, eval evalFunc, rng *rand.Rand, pop []*deep.Neural)
 			nn2 = append(nn2, cross(rng, sigma, p1, p2))
 		}
 		pop = nn2
-		log.Printf("%d %s", gen, fmtNum(best))
-		blob, err := nn2[0].Marshal()
-		if err != nil {
-			log.Fatalln("error:", err)
+		log.Printf("%d %s", gen, fmtNum(lastScore))
+	}
+	if meta {
+		lastScore = 0
+		for _, score := range prevScores {
+			lastScore += score
 		}
-		if err := ioutil.WriteFile("bettor.dat", blob, 0644); err != nil {
-			log.Fatalln("error:", err)
-		}
+		lastScore /= float64(len(prevScores))
+		log.Printf("meta-training score: %s", fmtNum(lastScore))
 	}
 	return pop[0], lastScore
 }

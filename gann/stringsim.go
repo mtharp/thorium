@@ -22,7 +22,7 @@ func simulateBailout(nn *deep.Neural, recs []*matchRecord) (score float64) {
 	for _, rec := range recs {
 		// predict
 		d := tiers[tierIdx[rec.Tier]]
-		wg := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
+		wg := wagerFromVector(nn.Predict(d.BetVector(rec)))
 		// wager
 		wager := bank * baseBet * wg.Size()
 		if bank-wager < simBailout || wager > bank {
@@ -54,7 +54,8 @@ func simulateWhale(nn *deep.Neural, recs []*matchRecord) (score float64) {
 	for _, rec := range recs {
 		// predict
 		d := tiers[tierIdx[rec.Tier]]
-		wg := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
+		v := d.BetVector(rec)
+		wg := wagerFromVector(nn.Predict(v))
 		// wager
 		wager := bank * baseBet * wg.Size()
 		if bank-wager < simBailout || wager > bank {
@@ -69,6 +70,7 @@ func simulateWhale(nn *deep.Neural, recs []*matchRecord) (score float64) {
 			//res = "win"
 		}
 		score += change
+		//log.Printf("%p score=%f wager=%f vec %s", nn, score, wager, fmtVec(v))
 		//log.Printf("%p bank=%f pred=%f/%f %s wager=%f wp=%d lp=%d chg=%+f score=%f", nn, bank, j, k, res, wager, rec.Pot[rec.Winner]/1000, rec.Pot[1-rec.Winner]/1000, change, score)
 		bank += change
 		if bank < simBailout {
@@ -88,7 +90,9 @@ func fmtVec(x []float64) string {
 	return strings.Join(w, " ")
 }
 
-func (d *tierData) BetVector(rec *matchRecord, bank float64) []float64 {
+const betVectorSize = predResponseSize + 4
+
+func (d *tierData) BetVector(rec *matchRecord) []float64 {
 	rec.bvo.Do(func() {
 		a, b := rec.Name[0], rec.Name[1]
 		astat := d.chars[a]
@@ -97,15 +101,9 @@ func (d *tierData) BetVector(rec *matchRecord, bank float64) []float64 {
 		eloDelta := bstat.Elo - astat.Elo
 		pred := d.Predict(a, b)
 		tier := float64(tierIdx[rec.Tier])
-		rec.bvc = append([]float64{rateDelta, eloDelta, tier}, pred...)
+		favor := astat.CrowdFavor() - bstat.CrowdFavor()
+		rec.bvc = append([]float64{rateDelta, eloDelta, tier, favor}, pred...)
 	})
-	if len(rec.bvc) == betVectorSize {
-		return rec.bvc
-	} else if len(rec.bvc)+1 == betVectorSize {
-		v := make([]float64, len(rec.bvc), betVectorSize)
-		copy(v, rec.bvc)
-		return append(v, bank)
-	} else {
-		panic("fix betVectorSize")
-	}
+	// NB don't append() to cached value or concurrent callers will stomp each other's "unused" capacity
+	return rec.bvc
 }
