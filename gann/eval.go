@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"math"
@@ -43,14 +42,23 @@ func main() {
 		log.Fatalln("error:", err)
 	}
 	var training, meta bool
+	var drange int
 	table := "all_matches"
 	if len(os.Args) > 1 {
 		training = true
-		if os.Args[1] == "meta" {
+		switch os.Args[1] {
+		case "predictor":
+			drange = 1
+			table = "imported_matches"
+		case "train":
+			drange = 2
+		case "meta":
 			meta = true
+		default:
+			log.Fatalln("predictor, train, or meta?")
 		}
 	}
-	tierRecs, ts, err := getRecords(table, time.Time{})
+	tierRecs, ts, err := getRecords(table, time.Time{}, drange)
 	if err != nil {
 		log.Fatalln("error:", err)
 	}
@@ -67,6 +75,9 @@ func main() {
 		tiers[i] = d
 	}
 	if training {
+		if drange == 1 {
+			return
+		}
 		var startPop []*deep.Neural
 		var seed int64 = 42
 		workDir := "_bnet"
@@ -84,10 +95,13 @@ func main() {
 		for {
 			rng := rand.New(rand.NewSource(seed))
 			recSets := sliceRecs(rng, allRecs)
-			evalFunc := func(nn *deep.Neural, debug io.Writer) float64 {
+			evalFunc := func(nn *deep.Neural, debug bool) float64 {
+				if debug {
+					log.Println("WAHHH")
+				}
 				scores := make(sort.Float64Slice, len(recSets))
 				for i, recSet := range recSets {
-					scores[i] = simulateWhale(nn, recSet)
+					scores[i] = simulateWhale(nn, recSet, debug)
 				}
 				// median
 				sort.Sort(scores)
@@ -102,10 +116,8 @@ func main() {
 				shuf = func() { recSets = sliceRecs(rng, allRecs) }
 			}
 			nn, score := train(betCfg, evalFunc, shuf, rng, startPop)
-			if score > 100e9 {
-				blob, _ := nn.Marshal()
-				ioutil.WriteFile(filepath.Join(workDir, fmt.Sprintf("%d.%d.dat", int64(score), time.Now().Unix())), blob, 0644)
-			}
+			blob, _ := nn.Marshal()
+			ioutil.WriteFile(filepath.Join(workDir, fmt.Sprintf("%d.%d.dat", int64(score), time.Now().Unix())), blob, 0644)
 		}
 	} else {
 		nns, err := netsFromFiles("_meta", consensusNets)

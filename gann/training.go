@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"math/rand"
@@ -12,7 +11,7 @@ import (
 	deep "github.com/patrikeh/go-deep"
 )
 
-type evalFunc func(nn *deep.Neural, debug io.Writer) float64
+type evalFunc func(nn *deep.Neural, debug bool) float64
 type shufFunc func()
 
 type score struct {
@@ -57,7 +56,7 @@ func train(ncfg *deep.Config, eval evalFunc, shuf shufFunc, rng *rand.Rand, pop 
 		for _, nn := range pop {
 			nn := nn
 			go func() {
-				nscore := score{nn, eval(nn, nil)}
+				nscore := score{nn, eval(nn, false)}
 				if math.IsNaN(nscore.score) {
 					nscore.score = -1e6
 				}

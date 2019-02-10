@@ -1,17 +1,11 @@
 package main
 
 import (
-	"math"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx"
 	"github.com/spf13/viper"
-)
-
-const (
-	defaultElo = 2000
-	kFactor    = 32
 )
 
 // records
@@ -50,8 +44,14 @@ func newLiveRecord(tier, a, b string) *matchRecord {
 	return &matchRecord{Tier: tier, Name: [2]string{a, b}}
 }
 
+func (r *matchRecord) Names() (string, string) {
+	return r.Name[0], r.Name[1]
+}
+
 func (r *matchRecord) Payoff(wager float64) float64 {
-	return wager * float64(r.Pot[1-r.Winner]) / float64(r.Pot[r.Winner])
+	winPot := float64(r.Pot[r.Winner])
+	losePot := float64(r.Pot[1-r.Winner])
+	return wager * losePot / (wager + winPot)
 }
 
 func (r *matchRecord) Response() []float64 {
@@ -71,7 +71,7 @@ func (r *matchRecord) Response() []float64 {
 	}
 }
 
-func getRecords(table string, since time.Time) (tierRecs map[string][]*matchRecord, ts time.Time, err error) {
+func getRecords(table string, since time.Time, drange int) (tierRecs map[string][]*matchRecord, ts time.Time, err error) {
 	tierRecs = make(map[string][]*matchRecord)
 	cfg, err := pgx.ParseConnectionString(viper.GetString("db.url"))
 	if err != nil {
@@ -82,7 +82,8 @@ func getRecords(table string, since time.Time) (tierRecs map[string][]*matchReco
 		return
 	}
 	defer conn.Close()
-	rows, err := conn.Query("SELECT ts, tier, winner, loser, winpot, losepot, duration FROM "+table+" WHERE mode = 'matchmaking' AND ts > $1 ORDER BY ts", since)
+	q := "SELECT ts, tier, winner, loser, winpot, losepot, duration FROM " + table + " WHERE mode = 'matchmaking' AND ts > $1 ORDER BY ts"
+	rows, err := conn.Query(q, since)
 	if err != nil {
 		return
 	}
@@ -106,17 +107,31 @@ func getRecords(table string, since time.Time) (tierRecs map[string][]*matchReco
 			ts = recTS
 		}
 	}
-	err = rows.Err()
+	if err = rows.Err(); err != nil {
+		return
+	}
+	if drange != 0 {
+		stride := drange - 1
+		for tier, recs := range tierRecs {
+			sliced := make([]*matchRecord, 0, len(recs)/2)
+			for i := 0; i < len(recs)/2; i++ {
+				sliced = append(sliced, recs[stride+i*2])
+			}
+			tierRecs[tier] = sliced
+		}
+	}
 	return
 }
 
 // stats
 
 type charStats struct {
+	Name              string
 	Wins, Losses      float64
 	WinTime, LoseTime float64
-	Elo               float64
 	Favor             float64
+
+	matchups map[string]matchup
 }
 
 func (s *charStats) AvgWinTime() float64 {
@@ -145,29 +160,27 @@ type charStatsMap map[string]*charStats
 
 func (m charStatsMap) Update(recs []*matchRecord) {
 	for _, rec := range recs {
-		swin := m[rec.Name[rec.Winner]]
+		iwin, ilose := rec.Winner, 1-rec.Winner
+		swin := m[rec.Name[iwin]]
 		if swin == nil {
-			swin = &charStats{Elo: defaultElo}
+			swin = &charStats{Name: rec.Name[iwin]}
 		}
-		slose := m[rec.Name[1-rec.Winner]]
+		slose := m[rec.Name[ilose]]
 		if slose == nil {
-			slose = &charStats{Elo: defaultElo}
+			slose = &charStats{Name: rec.Name[ilose]}
 		}
 		swin.Wins++
 		swin.WinTime += float64(rec.Duration)
+		swin.AddMatchup(rec.Name[ilose], true)
 		slose.Losses++
 		slose.LoseTime += float64(rec.Duration)
+		slose.AddMatchup(rec.Name[iwin], false)
 
-		winpot, losepot := float64(rec.Pot[rec.Winner]), float64(rec.Pot[1-rec.Winner])
+		winpot, losepot := float64(rec.Pot[iwin]), float64(rec.Pot[ilose])
 		swin.Favor = winpot / losepot
 		slose.Favor = losepot / winpot
 
-		expected := 1 / (1 + math.Pow(10, (slose.Elo-swin.Elo)/400))
-		change := kFactor * (1 - expected)
-		swin.Elo += change
-		slose.Elo -= change
-
-		m[rec.Name[rec.Winner]] = swin
-		m[rec.Name[1-rec.Winner]] = slose
+		m[rec.Name[iwin]] = swin
+		m[rec.Name[ilose]] = slose
 	}
 }

@@ -14,8 +14,8 @@ const (
 	eliteSelect = 4
 	mutateMin   = 0.5
 	mutateMax   = 5.0
-	termSlope   = 0.01
-	termStride  = 3
+	termSlope   = 0.0002
+	termStride  = 5
 	termMinGen  = 10
 	metaMaxGen  = 30
 	metaPop     = 32
@@ -33,7 +33,7 @@ const (
 )
 
 // consensus
-const consensusNets = 13
+const consensusNets = 7
 
 var (
 	predCfg = &deep.Config{

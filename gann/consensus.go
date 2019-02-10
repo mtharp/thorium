@@ -61,7 +61,7 @@ func (l wagerList) Consensus() wager {
 	if true {
 		var w []string
 		for j, y := range l {
-			s := fmt.Sprintf("%.1f", y)
+			s := fmt.Sprintf("%d", int(100*y))
 			if i == j {
 				s = "[" + s + "]"
 			}

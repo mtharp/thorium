@@ -21,7 +21,7 @@ var predGens = map[string]int{
 }
 
 func (d *tierData) makePredictor(tier string) error {
-	predCfg.Inputs = len(d.chars.PredVector(d.recs[0]))
+	predCfg.Inputs = len(d.chars.PredVector(d.recs[0].Names()))
 	filename := "_pnet/" + digestConfig(tier, predCfg) + ".dat"
 	if err := os.MkdirAll("_pnet", 0755); err != nil {
 		return err
@@ -40,17 +40,20 @@ func (d *tierData) makePredictor(tier string) error {
 	e := make(training.Examples, len(d.recs))
 	for i, rec := range d.recs {
 		e[i] = training.Example{
-			Input:    d.chars.PredVector(rec),
+			Input:    d.chars.PredVector(rec.Names()),
 			Response: rec.Response(),
 		}
 	}
 	if len(e[0].Response) != predResponseSize {
 		panic("fix predResponseSize")
 	}
-	nn := deep.NewNeural(predCfg)
+	// copy config so that the defaults aren't overwritten
+	ncfg := new(deep.Config)
+	*ncfg = *predCfg
+	nn := deep.NewNeural(ncfg)
 	optimizer := training.NewAdam(0.001, 0.9, 0.999, 1e-8)
 	trainer := training.NewBatchTrainer(optimizer, 1, 200, runtime.GOMAXPROCS(0))
-	x, y := e.Split(0.75)
+	x, y := e.Split(0.5)
 	gens := predGens[d.recs[0].Tier]
 	trainer.Train(nn, x, y, gens)
 	dump := nn.Dump()
@@ -85,17 +88,14 @@ func leastGames(astat, bstat *charStats) float64 {
 	return agames
 }
 
-func predVector(astat, bstat *charStats) []float64 {
+func (m charStatsMap) PredVector(a, b string) []float64 {
+	astat, bstat := m[a], m[b]
 	rateDelta := astat.WinRate() - bstat.WinRate()
 	winDelta := astat.AvgWinTime() - bstat.AvgWinTime()
 	loseDelta := bstat.AvgLoseTime() - astat.AvgLoseTime()
-	eloDelta := bstat.Elo - astat.Elo
 	games := leastGames(astat, bstat)
-	return []float64{rateDelta, winDelta, loseDelta, eloDelta, games}
-}
-
-func (m charStatsMap) PredVector(rec *matchRecord) []float64 {
-	return predVector(m[rec.Name[0]], m[rec.Name[1]])
+	abxy := m.ABXY(a, b)
+	return []float64{rateDelta, winDelta, loseDelta, games, abxy}
 }
 
 func (d *tierData) setPred(dump *deep.Dump) {
@@ -106,10 +106,8 @@ func (d *tierData) setPred(dump *deep.Dump) {
 }
 
 func (d *tierData) Predict(a, b string) []float64 {
-	astat := d.chars[a]
-	bstat := d.chars[b]
 	nn := d.ppool.Get().(*deep.Neural)
-	prediction := nn.Predict(predVector(astat, bstat))
+	prediction := nn.Predict(d.chars.PredVector(a, b))
 	d.ppool.Put(nn)
 	return prediction
 }
