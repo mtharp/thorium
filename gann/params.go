@@ -23,7 +23,7 @@ const (
 
 // betting limits
 const (
-	mmScale        = 1.0 / 10
+	mmScale        = 1.0 / 2
 	exhibScale     = 1.0 / 60
 	alwaysAllIn    = 5000
 	maxAllIn       = 100e3
@@ -33,7 +33,7 @@ const (
 )
 
 // consensus
-const consensusNets = 7
+const consensusNets = 13
 
 var (
 	predCfg = &deep.Config{

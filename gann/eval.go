@@ -120,7 +120,7 @@ func main() {
 			ioutil.WriteFile(filepath.Join(workDir, fmt.Sprintf("%d.%d.dat", int64(score), time.Now().Unix())), blob, 0644)
 		}
 	} else {
-		nns, err := netsFromFiles("_meta", consensusNets)
+		nns, err := netsFromFiles("_bnet", consensusNets)
 		if err != nil {
 			log.Fatalln("error:", err)
 		}

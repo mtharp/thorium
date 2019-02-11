@@ -124,7 +124,7 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 			bailout = tournBailout
 		case "exhibitions":
 			log.Printf("exhibs are for suckers")
-			//continue
+			continue
 		default:
 			log.Printf("unknown mode %q", mst.Mode)
 			continue
@@ -148,7 +148,7 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 			suffix = "k"
 		}
 		log.Printf("Placing %d%s on %q", dwager, suffix, rec.Name[idx])
-		continue
+		//continue
 		var p int
 		if rec.Name[idx] == p1name {
 			p = 1
