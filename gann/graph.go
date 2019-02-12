@@ -27,8 +27,24 @@ func (s *charStats) AddMatchup(opponent string, win bool) {
 	s.matchups[opponent] = s.matchups[opponent].Add(win)
 }
 
+func (cm charStatsMap) Graph3(a, x string) float64 {
+	var sum float64
+	for y, ym := range cm[a].matchups {
+		for b, bm := range cm[y].matchups {
+			if b == a {
+				continue
+			}
+			xm, ok := cm[b].matchups[x]
+			if ok {
+				sum += ym.Score() + bm.Score() + xm.Score()
+			}
+		}
+	}
+	return sum
+}
+
 func (cm charStatsMap) ABXY(a, x string) float64 {
-	var sum, count float64
+	var sum float64
 	for y, ym := range cm[a].matchups {
 		for b, bm := range cm[y].matchups {
 			if b == a {
@@ -37,12 +53,8 @@ func (cm charStatsMap) ABXY(a, x string) float64 {
 			xm, ok := cm[b].matchups[x]
 			if ok {
 				sum += ym.Score() - bm.Score() + xm.Score()
-				count++
 			}
 		}
 	}
-	if count == 0 {
-		return 0
-	}
-	return sum / count
+	return sum
 }

@@ -41,7 +41,7 @@ func main() {
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalln("error:", err)
 	}
-	var training, meta bool
+	var training, meta, sim, csim bool
 	var drange int
 	table := "all_matches"
 	if len(os.Args) > 1 {
@@ -54,8 +54,13 @@ func main() {
 			drange = 2
 		case "meta":
 			meta = true
+		case "sim":
+			sim = true
+		case "csim":
+			csim = true
+			training = false
 		default:
-			log.Fatalln("predictor, train, or meta?")
+			log.Fatalln("predictor, train, meta, sim?")
 		}
 	}
 	tierRecs, ts, err := getRecords(table, time.Time{}, drange)
@@ -74,15 +79,13 @@ func main() {
 		}
 		tiers[i] = d
 	}
-	if training {
+	if training || sim {
 		if drange == 1 {
 			return
 		}
 		var startPop []*deep.Neural
-		var seed int64 = 42
 		workDir := "_bnet"
-		if meta {
-			seed = time.Now().UnixNano()
+		if meta || sim {
 			startPop, err = netsFromFiles(workDir, population)
 			if err != nil {
 				log.Fatalln("error:", err)
@@ -93,23 +96,23 @@ func main() {
 			log.Fatalln("error:", err)
 		}
 		for {
-			rng := rand.New(rand.NewSource(seed))
+			rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 			recSets := sliceRecs(rng, allRecs)
 			evalFunc := func(nn *deep.Neural, debug bool) float64 {
-				if debug {
-					log.Println("WAHHH")
-				}
 				scores := make(sort.Float64Slice, len(recSets))
 				for i, recSet := range recSets {
 					scores[i] = simulateWhale(nn, recSet, debug)
 				}
-				// median
 				sort.Sort(scores)
-				s := scores[len(scores)/2]
-				if len(scores)%2 == 0 {
-					s = (s + scores[len(scores)/2-1]) / 2
+				if sim {
+					log.Println(fmtVec(scores))
 				}
-				return s
+				return scores[0]
+			}
+			if sim {
+				recSets = recSets[:1]
+				log.Println(evalFunc(startPop[0], true))
+				return
 			}
 			var shuf shufFunc
 			if meta {
@@ -124,7 +127,18 @@ func main() {
 		if err != nil {
 			log.Fatalln("error:", err)
 		}
-		watchAndRun(nns, ts)
+		mnns, err := netsFromFiles("_meta", consensusMeta)
+		if err != nil {
+			log.Fatalln("error:", err)
+		}
+		nns = append(nns, mnns...)
+		if csim {
+			rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+			recSet := sliceRecs(rng, allRecs)[0]
+			simulateWhaleC(nns, recSet)
+		} else {
+			watchAndRun(nns, ts)
+		}
 	}
 }
 

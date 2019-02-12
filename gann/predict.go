@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"io/ioutil"
 	"os"
@@ -14,15 +12,15 @@ import (
 
 var predGens = map[string]int{
 	"P": 10000,
-	"B": 1500,
+	"B": 2500,
 	"A": 1500,
-	"S": 1500,
-	"X": 10000,
+	"S": 2500,
+	"X": 3500,
 }
 
 func (d *tierData) makePredictor(tier string) error {
 	predCfg.Inputs = len(d.chars.PredVector(d.recs[0].Names()))
-	filename := "_pnet/" + digestConfig(tier, predCfg) + ".dat"
+	filename := "_pnet/" + tier + ".dat"
 	if err := os.MkdirAll("_pnet", 0755); err != nil {
 		return err
 	}
@@ -68,17 +66,6 @@ func (d *tierData) makePredictor(tier string) error {
 	return nil
 }
 
-func digestConfig(tier string, ncfg *deep.Config) string {
-	v := struct {
-		Tier   string
-		Neural *deep.Config
-	}{tier, ncfg}
-	cfgblob, _ := json.Marshal(v)
-	d := sha1.New()
-	d.Write(cfgblob)
-	return hex.EncodeToString(d.Sum(nil))
-}
-
 func leastGames(astat, bstat *charStats) float64 {
 	agames := astat.Wins + astat.Losses
 	bgames := bstat.Wins + bstat.Losses
@@ -94,8 +81,7 @@ func (m charStatsMap) PredVector(a, b string) []float64 {
 	winDelta := astat.AvgWinTime() - bstat.AvgWinTime()
 	loseDelta := bstat.AvgLoseTime() - astat.AvgLoseTime()
 	games := leastGames(astat, bstat)
-	abxy := m.ABXY(a, b)
-	return []float64{rateDelta, winDelta, loseDelta, games, abxy}
+	return []float64{rateDelta, winDelta, loseDelta, games, m.Graph3(a, b)}
 }
 
 func (d *tierData) setPred(dump *deep.Dump) {

@@ -16,15 +16,14 @@ const (
 	mutateMax   = 5.0
 	termSlope   = 0.0002
 	termStride  = 5
-	termMinGen  = 10
+	termMinGen  = 30
 	metaMaxGen  = 30
 	metaPop     = 32
 )
 
 // betting limits
 const (
-	mmScale        = 1.0 / 2
-	exhibScale     = 1.0 / 60
+	mmScale        = 1.0 / 20
 	alwaysAllIn    = 5000
 	maxAllIn       = 100e3
 	maxBet         = 256e3
@@ -33,7 +32,10 @@ const (
 )
 
 // consensus
-const consensusNets = 13
+const (
+	consensusNets = 3
+	consensusMeta = 0
+)
 
 var (
 	predCfg = &deep.Config{

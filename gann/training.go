@@ -171,14 +171,14 @@ func fmtNet(nn *deep.Neural) string {
 func fmtNum(n float64) string {
 	switch {
 	case n > 1e12:
-		return fmt.Sprintf("%.1ft", n/1e12)
+		return fmt.Sprintf("%.2ft", n/1e12)
 	case n > 1e9:
-		return fmt.Sprintf("%.1fb", n/1e9)
+		return fmt.Sprintf("%.2fb", n/1e9)
 	case n > 1e6:
-		return fmt.Sprintf("%.1fm", n/1e6)
+		return fmt.Sprintf("%.2fm", n/1e6)
 	case n > 1e3:
-		return fmt.Sprintf("%.1fk", n/1e3)
+		return fmt.Sprintf("%.2fk", n/1e3)
 	default:
-		return fmt.Sprintf("%.1f", n)
+		return fmt.Sprintf("%.2f", n)
 	}
 }

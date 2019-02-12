@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io/ioutil"
 	"log"
 	"os"
@@ -13,6 +14,9 @@ import (
 )
 
 func netsFromFiles(dirname string, count int) ([]*deep.Neural, error) {
+	if count < 1 {
+		return nil, nil
+	}
 	f, err := os.Open(dirname)
 	if err != nil {
 		return nil, err
@@ -41,6 +45,9 @@ func netsFromFiles(dirname string, count int) ([]*deep.Neural, error) {
 			return nil, err
 		}
 		ret = append(ret, nn)
+	}
+	if len(scores) == 0 {
+		return nil, errors.New("no files in " + dirname)
 	}
 	log.Printf("loaded %d nets with scores %s - %s", len(scores), fmtNum(scores[0].score), fmtNum(scores[len(scores)-1].score))
 	return ret, nil

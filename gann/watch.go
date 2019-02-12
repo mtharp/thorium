@@ -114,7 +114,7 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 			continue
 		}
 
-		wager := bank * baseBet * wg.Size()
+		wager := bank * wg.Size()
 		log.Printf("base bet %f", wager)
 		bailout := float64(defaultBailout)
 		switch mst.Mode {
