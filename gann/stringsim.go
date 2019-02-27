@@ -21,11 +21,10 @@ func shuffleRecords(recs []*matchRecord) {
 func simulateBailout(nn *deep.Neural, recs []*matchRecord) (score float64) {
 	bank := simBailout
 	for _, rec := range recs {
-		// predict
 		d := tiers[tierIdx[rec.Tier]]
-		wg := wagerFromVector(nn.Predict(d.BetVector(rec)))
+		wg := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
 		// wager
-		wager := bank * wg.Size()
+		wager := bank * wg.Size() * mmScale
 		if bank-wager < simBailout || wager > bank {
 			wager = bank
 		}
@@ -48,21 +47,28 @@ func simulateBailout(nn *deep.Neural, recs []*matchRecord) (score float64) {
 	return
 }
 
-const whaleStart = 5e6
+const whaleStart = 1e6
 
-func simulateWhale(nn *deep.Neural, recs []*matchRecord, debug bool) float64 {
+func simulateWhale(nn *deep.Neural, recs []*matchRecord, scale, debug bool) float64 {
 	bank := whaleStart
 	balances := make(sort.Float64Slice, len(recs))
 	for i, rec := range recs {
 		// predict
 		d := tiers[tierIdx[rec.Tier]]
-		v := d.BetVector(rec)
-		if len(v) != betVectorSize {
+		v := d.BetVector(rec, bank)
+		if v == nil {
+			// no data
+			balances[i] = bank
+			continue
+		} else if len(v) != betVectorSize {
 			panic("betVectorSize is wrong")
 		}
 		wg := wagerFromVector(nn.Predict(v))
 		// wager
 		wager := bank * wg.Size()
+		if scale {
+			wager *= mmScale
+		}
 		if bank-wager < simBailout || wager > bank {
 			wager = bank
 		}
@@ -76,50 +82,18 @@ func simulateWhale(nn *deep.Neural, recs []*matchRecord, debug bool) float64 {
 		}
 		if debug {
 			//log.Printf("%p score=%f wager=%f vec %s", nn, score, wager, fmtVec(v))
-			log.Printf("%p bank=%f %s wager=%f wp=%d lp=%d chg=%+f [%s]", nn, bank, res, wager, rec.Pot[rec.Winner]/1000, rec.Pot[1-rec.Winner]/1000, change, fmtVec(v))
+			log.Printf("%p bank=%f %s wager=%f po=%.3f ppo=%.3f chg=%+f [%s]", nn, bank, res, wager, rec.Payoff(1), change, fmtVec(v))
 		}
 		bank += change
-		/*if bank < simBailout {
+		if bank < simBailout {
 			// wow, you lose!
 			return -whaleStart + float64(i)
-		}*/
+		}
 		balances[i] = bank
 	}
 	sort.Sort(balances)
-	return balances[len(balances)/4]
-}
-
-func simulateWhaleC(nns []*deep.Neural, recs []*matchRecord) {
-	bank := whaleStart
-	for _, rec := range recs {
-		// predict
-		d := tiers[tierIdx[rec.Tier]]
-		v := d.BetVector(rec)
-		if len(v) != betVectorSize {
-			panic("betVectorSize is wrong")
-		}
-		wl := make(wagerList, len(nns))
-		for i, nn := range nns {
-			wl[i] = wagerFromVector(nn.Predict(v))
-		}
-		wg := wl.Consensus()
-		// wager
-		wager := bank * wg.Size() * mmScale
-		if bank-wager < simBailout || wager > bank {
-			wager = bank
-		}
-		// outcome
-		change := -wager
-		res := "lose"
-		if (rec.Winner == 1) == wg.PredictB() {
-			// win
-			change = rec.Payoff(wager)
-			res = "win "
-		}
-		log.Printf("bank=%f %s wager=%f wp=%d lp=%d chg=%+f [%s]", bank, res, wager, rec.Pot[rec.Winner]/1000, rec.Pot[1-rec.Winner]/1000, change, fmtVec(v))
-		bank += change
-	}
-	log.Printf("final: %s", fmtNum(bank))
+	return balances[len(balances)/10]
+	return bank
 }
 
 func fmtVec(x []float64) string {
@@ -130,19 +104,32 @@ func fmtVec(x []float64) string {
 	return strings.Join(w, " ")
 }
 
-const betVectorSize = predResponseSize + 3
+const betVectorSize = 6
 
-func (d *tierData) BetVector(rec *matchRecord) []float64 {
+func (d *tierData) BetVector(rec *matchRecord, bank float64) []float64 {
 	rec.bvo.Do(func() {
 		a, b := rec.Name[0], rec.Name[1]
-		astat := d.chars[a]
-		bstat := d.chars[b]
-		rateDelta := astat.WinRate() - bstat.WinRate()
-		pred := d.Predict(a, b)
-		tier := float64(tierIdx[rec.Tier])
-		favor := astat.CrowdFavor() - bstat.CrowdFavor()
-		rec.bvc = append([]float64{rateDelta, tier, favor}, pred...)
+		astat, bstat := d.chars[a], d.chars[b]
+		if astat == nil || bstat == nil {
+			return
+		}
+		rec.bvc = []float64{
+			astat.WinRate() - bstat.WinRate(),
+			astat.CrowdFavor() - bstat.CrowdFavor(),
+			astat.AvgWinTime() - bstat.AvgWinTime(),
+			leastGames(astat, bstat),
+			bank / rec.PotAvg,
+			float64(tierIdx[rec.Tier]),
+		}
 	})
-	// NB don't append() to cached value or concurrent callers will stomp each other's "unused" capacity
 	return rec.bvc
+}
+
+func leastGames(astat, bstat *charStats) float64 {
+	agames := astat.Wins + astat.Losses
+	bgames := bstat.Wins + bstat.Losses
+	if bgames < agames {
+		return bgames
+	}
+	return agames
 }

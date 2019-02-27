@@ -104,7 +104,6 @@ func (db *DB) sendBatch(banks []bankUpdate) error {
 	if err := b.Close(); err != nil {
 		return err
 	}
-	log.Printf("banks updated in %s", time.Since(start))
 	if d := time.Since(start); d > 100*time.Millisecond {
 		log.Printf("warning: updating banks took %s", d)
 	}

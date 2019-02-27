@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math"
@@ -11,8 +12,7 @@ import (
 	deep "github.com/patrikeh/go-deep"
 )
 
-type evalFunc func(nn *deep.Neural, debug bool) float64
-type shufFunc func()
+type evalFunc func(nn *deep.Neural) float64
 
 type score struct {
 	nn    *deep.Neural
@@ -34,29 +34,20 @@ func (l scoreList) Swap(i, j int) {
 	l[i], l[j] = l[j], l[i]
 }
 
-func train(ncfg *deep.Config, eval evalFunc, shuf shufFunc, rng *rand.Rand, pop []*deep.Neural) (*deep.Neural, float64) {
-	meta := pop != nil
-	if !meta {
-		pop = make([]*deep.Neural, population)
-		for i := 0; i < population; i++ {
-			pop[i] = deep.NewNeural(ncfg)
-		}
+func train(ctx context.Context, ncfg *deep.Config, eval evalFunc, rng *rand.Rand) (*deep.Neural, float64) {
+	pop := make([]*deep.Neural, population)
+	for i := 0; i < population; i++ {
+		pop[i] = deep.NewNeural(ncfg)
 	}
-	var prevScores [10]float64
+	var prevScores [termStride]float64
 	var lastScore float64
 	for gen := 0; ; gen++ {
-		if gen != 0 && shuf != nil {
-			if gen >= metaMaxGen {
-				break
-			}
-			shuf()
-		}
 		scores := make(scoreList, 0, len(pop))
 		sch := make(chan score, len(pop))
 		for _, nn := range pop {
 			nn := nn
 			go func() {
-				nscore := score{nn, eval(nn, false)}
+				nscore := score{nn, eval(nn)}
 				if math.IsNaN(nscore.score) {
 					nscore.score = -1e6
 				}
@@ -72,8 +63,8 @@ func train(ncfg *deep.Config, eval evalFunc, shuf shufFunc, rng *rand.Rand, pop 
 				log.Printf("%f %p", nscore.score, nscore.nn)
 			}
 		}
-		lastScore := scores[0].score
-		if prevScores[0] != 0 && shuf == nil {
+		lastScore = scores[0].score
+		if prevScores[0] != 0 {
 			if lastScore < prevScores[0] {
 				log.Fatalln("score regressed -- data race?")
 			}
@@ -101,14 +92,9 @@ func train(ncfg *deep.Config, eval evalFunc, shuf shufFunc, rng *rand.Rand, pop 
 		}
 		pop = nn2
 		log.Printf("%d %s", gen, fmtNum(lastScore))
-	}
-	if meta {
-		lastScore = 0
-		for _, score := range prevScores {
-			lastScore += score
+		if ctx.Err() != nil {
+			break
 		}
-		lastScore /= float64(len(prevScores))
-		log.Printf("meta-training score: %s", fmtNum(lastScore))
 	}
 	return pop[0], lastScore
 }

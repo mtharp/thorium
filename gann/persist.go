@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,10 +12,7 @@ import (
 	deep "github.com/patrikeh/go-deep"
 )
 
-func netsFromFiles(dirname string, count int) ([]*deep.Neural, error) {
-	if count < 1 {
-		return nil, nil
-	}
+func netFromFiles(dirname string) (*deep.Neural, error) {
 	f, err := os.Open(dirname)
 	if err != nil {
 		return nil, err
@@ -31,26 +27,14 @@ func netsFromFiles(dirname string, count int) ([]*deep.Neural, error) {
 		scores = append(scores, fileScore{name, float64(score)})
 	}
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
-	if len(scores) > count {
-		scores = scores[:count]
-	}
-	var ret []*deep.Neural
-	for _, score := range scores {
-		blob, err := ioutil.ReadFile(filepath.Join(dirname, score.name))
-		if err != nil {
-			return nil, err
-		}
-		nn, err := deep.Unmarshal(blob)
-		if err != nil {
-			return nil, err
-		}
-		ret = append(ret, nn)
-	}
 	if len(scores) == 0 {
 		return nil, errors.New("no files in " + dirname)
 	}
-	log.Printf("loaded %d nets with scores %s - %s", len(scores), fmtNum(scores[0].score), fmtNum(scores[len(scores)-1].score))
-	return ret, nil
+	blob, err := ioutil.ReadFile(filepath.Join(dirname, scores[0].name))
+	if err != nil {
+		return nil, err
+	}
+	return deep.Unmarshal(blob)
 }
 
 type fileScore struct {

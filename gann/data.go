@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -8,12 +10,15 @@ import (
 	"github.com/spf13/viper"
 )
 
+const potAvgDecay = 0.2
+
 // records
 
 type matchRecord struct {
 	Tier     string
 	Name     [2]string
 	Pot      [2]int64
+	PotAvg   float64
 	Winner   int
 	Duration int
 
@@ -21,11 +26,12 @@ type matchRecord struct {
 	bvc []float64
 }
 
-func newRecord(tier, winner, loser string, winpot, losepot int64, duration int) *matchRecord {
+func newRecord(tier, winner, loser string, winpot, losepot int64, potAvg float64, duration int) *matchRecord {
 	r := &matchRecord{
 		Tier:     tier,
 		Name:     [2]string{winner, loser},
 		Pot:      [2]int64{winpot, losepot},
+		PotAvg:   potAvg,
 		Winner:   0,
 		Duration: duration,
 	}
@@ -37,7 +43,7 @@ func newRecord(tier, winner, loser string, winpot, losepot int64, duration int) 
 	return r
 }
 
-func newLiveRecord(tier, a, b string) *matchRecord {
+func newLiveRecord(tier, a, b string, potAvg float64) *matchRecord {
 	if a > b {
 		a, b = b, a
 	}
@@ -54,24 +60,8 @@ func (r *matchRecord) Payoff(wager float64) float64 {
 	return wager * losePot / (wager + winPot)
 }
 
-func (r *matchRecord) Response() []float64 {
-	switch predResponseSize {
-	case 1:
-		if r.Winner == 1 {
-			return []float64{1.0}
-		} else {
-			return []float64{-1.0}
-		}
-	case 2:
-		response := []float64{0.0, 0.0}
-		response[r.Winner] = 1.0
-		return response
-	default:
-		panic("nah")
-	}
-}
-
-func getRecords(table string, since time.Time, drange int) (tierRecs map[string][]*matchRecord, ts time.Time, err error) {
+func getRecords(table string, since time.Time, initPotAvg float64, tournament bool) (tierRecs map[string][]*matchRecord, ts time.Time, potAvg float64, err error) {
+	potAvg = initPotAvg
 	tierRecs = make(map[string][]*matchRecord)
 	cfg, err := pgx.ParseConnectionString(viper.GetString("db.url"))
 	if err != nil {
@@ -82,7 +72,11 @@ func getRecords(table string, since time.Time, drange int) (tierRecs map[string]
 		return
 	}
 	defer conn.Close()
-	q := "SELECT ts, tier, winner, loser, winpot, losepot, duration FROM " + table + " WHERE mode = 'matchmaking' AND ts > $1 ORDER BY ts"
+	modes := "'matchmaking'"
+	if tournament {
+		modes += ", 'tournament'"
+	}
+	q := fmt.Sprintf("SELECT ts, tier, winner, loser, winpot, losepot, duration FROM %s WHERE mode IN (%s) AND ts > $1 ORDER BY ts", table, modes)
 	rows, err := conn.Query(q, since)
 	if err != nil {
 		return
@@ -102,23 +96,19 @@ func getRecords(table string, since time.Time, drange int) (tierRecs map[string]
 		if _, ok := tierIdx[tier]; !ok {
 			continue
 		}
-		tierRecs[tier] = append(tierRecs[tier], newRecord(tier, winner, loser, winpot, losepot, duration))
+		totPot := float64(winpot + losepot)
+		if potAvg == 0 {
+			potAvg = totPot
+		} else {
+			potAvg = potAvgDecay*totPot + (1-potAvgDecay)*potAvg
+		}
+		tierRecs[tier] = append(tierRecs[tier], newRecord(tier, winner, loser, winpot, losepot, potAvg, duration))
 		if recTS.After(ts) {
 			ts = recTS
 		}
 	}
 	if err = rows.Err(); err != nil {
 		return
-	}
-	if drange != 0 {
-		stride := drange - 1
-		for tier, recs := range tierRecs {
-			sliced := make([]*matchRecord, 0, len(recs)/2)
-			for i := 0; i < len(recs)/2; i++ {
-				sliced = append(sliced, recs[stride+i*2])
-			}
-			tierRecs[tier] = sliced
-		}
 	}
 	return
 }
@@ -153,7 +143,7 @@ func (s *charStats) WinRate() float64 {
 }
 
 func (s *charStats) CrowdFavor() float64 {
-	return s.Favor / (s.Wins + s.Losses)
+	return math.Pow(s.Favor, 1/(s.Wins+s.Losses))
 }
 
 type charStatsMap map[string]*charStats
@@ -177,8 +167,8 @@ func (m charStatsMap) Update(recs []*matchRecord) {
 		slose.AddMatchup(rec.Name[iwin], false)
 
 		winpot, losepot := float64(rec.Pot[iwin]), float64(rec.Pot[ilose])
-		swin.Favor = winpot / losepot
-		slose.Favor = losepot / winpot
+		swin.Favor *= winpot / losepot
+		slose.Favor *= losepot / winpot
 
 		m[rec.Name[iwin]] = swin
 		m[rec.Name[ilose]] = slose

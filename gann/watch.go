@@ -18,10 +18,11 @@ import (
 	"github.com/spf13/viper"
 )
 
-func watchAndRun(nns []*deep.Neural, ts time.Time) {
+func watchAndRun(nn *deep.Neural) {
 	var p1name, p2name string
 	var mst struct{ P1, P2, Tier, Mode string }
 	var failures int
+	_, ts, avgPot := prepData(false)
 	jar, _ := cookiejar.New(nil)
 	cli := &http.Client{Jar: jar}
 	uid, bank, err := scrapeHome(cli)
@@ -44,6 +45,10 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 		modeChanged = lastMode != "" && lastMode != mst.Mode
 		if modeChanged {
 			bankChanged = true
+			if lastMode == "tournament" {
+				log.Printf("tournament ended, resetting data")
+				prepData(false)
+			}
 		}
 		lastMode = mst.Mode
 		// update bank
@@ -75,7 +80,7 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 			bankChanged = false
 		}
 		// update character data
-		tierRecs, ts2, err := getRecords("matches", ts, 0)
+		tierRecs, ts2, avgPot2, err := getRecords("matches", ts, avgPot, true)
 		if err != nil {
 			log.Printf("error: fetching new match records: %s", err)
 		} else {
@@ -86,6 +91,7 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 			if ts2.After(ts) {
 				ts = ts2
 			}
+			avgPot = avgPot2
 		}
 
 		idx, ok := tierIdx[mst.Tier]
@@ -102,25 +108,21 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 			log.Printf("no data for %q", p2name)
 			continue
 		}
-		rec := newLiveRecord(mst.Tier, p1name, p2name)
-		v := d.BetVector(rec)
-		wl := make(wagerList, len(nns))
-		for i, nn := range nns {
-			wl[i] = wagerFromVector(nn.Predict(v))
-		}
-		wg := wl.Consensus()
-		if wg.Size() < 0.002 {
+		rec := newLiveRecord(mst.Tier, p1name, p2name, avgPot)
+		wg := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
+		if wg.Size() <= 0 {
 			log.Printf("too close to call")
 			continue
 		}
 
-		wager := bank * wg.Size()
-		log.Printf("base bet %f", wager)
+		base := bank * wg.Size()
+		wager := base
 		bailout := float64(defaultBailout)
 		switch mst.Mode {
 		case "matchmaking":
 			wager *= mmScale
 		case "tournament":
+			wager *= trnScale
 			bailout = tournBailout
 		case "exhibitions":
 			log.Printf("exhibs are for suckers")
@@ -135,7 +137,7 @@ func watchAndRun(nns []*deep.Neural, ts time.Time) {
 		if wager > maxBet {
 			wager = maxBet
 		}
-		log.Printf("adjusted %f", wager)
+		log.Printf("base=%s adj=%s avgpot=%s", fmtNum(base), fmtNum(wager), fmtNum(avgPot))
 		idx = 0
 		if wg.PredictB() {
 			idx = 1

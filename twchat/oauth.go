@@ -19,7 +19,10 @@ import (
 )
 
 const (
-	listenPort = 9900
+	listenPort    = 9900
+	minRetry      = 1 * time.Second
+	maxRetry      = 60 * time.Second
+	backoffFactor = 3
 )
 
 func main() {
@@ -49,15 +52,26 @@ func main() {
 	go http.ListenAndServe(fmt.Sprintf("0.0.0.0:%d", listenPort), nil)
 	go s.keepAlive()
 
-	timer := time.NewTimer(time.Minute)
+	delay := minRetry
+	timer := time.NewTimer(delay)
 	for {
 		select {
 		case <-newToken:
 		case <-timer.C:
 		}
+		start := time.Now()
 		if err := runIRC(s); err != nil {
 			log.Printf("error: %s", err)
 		}
+		if time.Since(start) > delay*3 {
+			delay = minRetry
+		} else {
+			delay *= backoffFactor
+			if delay > maxRetry {
+				delay = maxRetry
+			}
+		}
+		timer.Reset(delay)
 	}
 }
 
