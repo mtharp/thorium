@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx"
-	"github.com/spf13/viper"
 )
 
 const stmtBank = "update_bank"
@@ -21,10 +20,12 @@ type bankUpdate struct {
 	Bank int64
 }
 
-func connectDB() (*DB, error) {
-	cfg, err := pgx.ParseConnectionString(viper.GetString("db.url"))
+var db *DB
+
+func connectDB() error {
+	cfg, err := pgx.ParseEnvLibpq()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	pool, err := pgx.NewConnPool(pgx.ConnPoolConfig{
 		ConnConfig: cfg,
@@ -34,20 +35,29 @@ func connectDB() (*DB, error) {
 		},
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	d := &DB{
+	db = &DB{
 		ConnPool:   pool,
 		banktotals: make(chan bankUpdate, 1000),
 	}
-	go d.bankUpdater()
-	return d, nil
+	go db.bankUpdater()
+	return nil
 }
 
 func (db *DB) SetBank(username string, bank int64) {
 	select {
 	case db.banktotals <- bankUpdate{username, bank}:
 	default:
+	}
+}
+
+func (db *DB) AddHistory(username string, bank int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := db.ExecEx(ctx, "INSERT INTO bank_history (username, bank) VALUES ($1, $2)", nil, username, bank)
+	if err != nil {
+		log.Printf("error: updating bank history: %s", err)
 	}
 }
 

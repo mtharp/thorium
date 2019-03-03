@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,7 @@ func netFromFiles(dirname string) (*deep.Neural, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer log.Printf("loaded %s", scores[0].name)
 	return deep.Unmarshal(blob)
 }
 

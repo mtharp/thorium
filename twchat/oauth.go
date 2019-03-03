@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"sync"
@@ -27,29 +25,41 @@ const (
 
 func main() {
 	// configure
-	viper.SetConfigName("thorium")
-	viper.AddConfigPath(".")
-	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalln("error:", err)
+	viper.AutomaticEnv()
+	if err := connectDB(); err != nil {
+		log.Fatalln("error: connect to db:", err)
 	}
-	home := fmt.Sprintf("http://localhost:%d", listenPort)
 	conf := &oauth2.Config{
-		ClientID:     viper.GetString("twitch.client_id"),
-		ClientSecret: viper.GetString("twitch.client_secret"),
+		ClientID:     viper.GetString("client_id"),
+		ClientSecret: viper.GetString("client_secret"),
+		RedirectURL:  viper.GetString("redirect_url"),
 		Endpoint:     twitch.Endpoint,
-		RedirectURL:  home + "/cb",
 		Scopes:       []string{"chat:read"},
 	}
 	newToken := make(chan struct{})
 	s := &TokenServer{
-		Oauth:     conf,
-		Home:      home,
-		TokenFile: viper.GetString("twitch.token_file"),
-		NewToken:  newToken,
+		Oauth:    conf,
+		NewToken: newToken,
 	}
-	http.HandleFunc("/", s.viewHome)
-	http.HandleFunc("/cb", s.viewCallback)
-	go http.ListenAndServe(fmt.Sprintf("0.0.0.0:%d", listenPort), nil)
+	http.HandleFunc("/healthz", s.viewHealth)
+	http.HandleFunc("/", s.viewCallback)
+	var good bool
+	t, err := getToken()
+	if err != nil {
+		log.Fatalln("error: failed to retrieve token:", err)
+	} else if t != nil {
+		s.source = oauth2.ReuseTokenSource(nil, s.Oauth.TokenSource(context.Background(), t))
+		if _, err := s.Token(); err == nil {
+			good = true
+		}
+	}
+	go http.ListenAndServe(viper.GetString("listen"), nil)
+	if good {
+		log.Println("loaded token from db")
+	} else {
+		log.Println("saved token not available, please log in at", conf.RedirectURL)
+		<-newToken
+	}
 	go s.keepAlive()
 
 	delay := minRetry
@@ -76,37 +86,38 @@ func main() {
 }
 
 type TokenServer struct {
-	Oauth     *oauth2.Config
-	Home      string
-	TokenFile string
-	NewToken  chan<- struct{}
+	Oauth    *oauth2.Config
+	Home     string
+	NewToken chan<- struct{}
 
 	source oauth2.TokenSource
 	state  string
 	mu     sync.Mutex
 }
 
-func (s *TokenServer) viewHome(rw http.ResponseWriter, req *http.Request) {
-	d := make([]byte, 8)
-	rand.Reader.Read(d)
-	state := hex.EncodeToString(d)
-	authURL := s.Oauth.AuthCodeURL(state)
-	s.mu.Lock()
-	s.state = state
-	s.mu.Unlock()
-	fmt.Fprintf(rw, `<!DOCTYPE html>
+func (s *TokenServer) viewCallback(rw http.ResponseWriter, req *http.Request) {
+	state := req.FormValue("state")
+	code := req.FormValue("code")
+	if state == "" || code == "" {
+		d := make([]byte, 8)
+		rand.Reader.Read(d)
+		state := hex.EncodeToString(d)
+		authURL := s.Oauth.AuthCodeURL(state)
+		s.mu.Lock()
+		s.state = state
+		s.mu.Unlock()
+		fmt.Fprintf(rw, `<!DOCTYPE html>
 <html><body><script type="text/javascript">
 location.href = "%s";
 </script><a href="%s">login to twitch</a></body></html>
 `, authURL, authURL)
-}
-
-func (s *TokenServer) viewCallback(rw http.ResponseWriter, req *http.Request) {
-	if s.state != req.FormValue("state") {
+		return
+	}
+	if state != req.FormValue("state") {
 		http.Error(rw, "wrong oauth state", 400)
 		return
 	}
-	t, err := s.Oauth.Exchange(req.Context(), req.FormValue("code"))
+	t, err := s.Oauth.Exchange(req.Context(), code)
 	if err != nil {
 		http.Error(rw, err.Error(), 500)
 		return
@@ -124,6 +135,22 @@ func (s *TokenServer) viewCallback(rw http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(rw, "login complete")
 }
 
+func (s *TokenServer) viewHealth(rw http.ResponseWriter, req *http.Request) {
+	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+	defer cancel()
+	conn, err := db.Acquire()
+	if err == nil {
+		defer db.Release(conn)
+		err = conn.Ping(ctx)
+		if err == nil {
+			fmt.Fprintln(rw, "OK")
+			return
+		}
+	}
+	log.Printf("error: in health check:", err)
+	http.Error(rw, err.Error(), 500)
+}
+
 func (s *TokenServer) Token() (*oauth2.Token, error) {
 	s.mu.Lock()
 	ts := s.source
@@ -135,43 +162,13 @@ func (s *TokenServer) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.TokenFile != "" {
-		blob, err := json.Marshal(t)
-		if err != nil {
-			return nil, err
-		}
-		if err := ioutil.WriteFile(s.TokenFile, blob, 0600); err != nil {
-			return nil, err
-		}
+	if err := putToken(t); err != nil {
+		log.Printf("error: failed to persist token: %s", err)
 	}
 	return t, nil
 }
 
 func (s *TokenServer) keepAlive() {
-	var good bool
-	if s.TokenFile != "" {
-		blob, err := ioutil.ReadFile(s.TokenFile)
-		if err == nil {
-			t := new(oauth2.Token)
-			if err := json.Unmarshal(blob, t); err == nil {
-				s.mu.Lock()
-				s.source = oauth2.ReuseTokenSource(nil, s.Oauth.TokenSource(context.Background(), t))
-				s.mu.Unlock()
-			}
-			if _, err := s.Token(); err == nil {
-				good = true
-				select {
-				case s.NewToken <- struct{}{}:
-				default:
-				}
-			}
-		}
-	}
-	if good {
-		log.Println("loaded token from file")
-	} else {
-		log.Println("saved token not available, please log in:\n", s.Home)
-	}
 	t := time.NewTicker(time.Hour)
 	for {
 		<-t.C

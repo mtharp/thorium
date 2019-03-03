@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -18,8 +16,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/spf13/viper"
-
-	_ "net/http/pprof"
 )
 
 const (
@@ -131,25 +127,13 @@ func keepalive(conn *websocket.Conn, pongch chan bool, donech chan struct{}) {
 var cli *http.Client
 
 func main() {
-	viper.SetConfigName("thorium")
-	viper.AddConfigPath(".")
-	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalln("error:", err)
-	}
+	viper.AutomaticEnv()
 	for _, name := range viper.GetStringSlice("watch") {
 		watching[name] = true
 	}
-	db, err := connectDB()
-	if err != nil {
+	if err := connectDB(); err != nil {
 		log.Fatalln("error: can't connect to db:", err)
 	}
-	// serve pprof
-	lis, err := net.Listen("tcp", ":0")
-	if err != nil {
-		log.Fatalln("error:", err)
-	}
-	log.Printf("serving pprof on http://localhost:%d/debug/pprof/", lis.Addr().(*net.TCPAddr).Port)
-	go http.Serve(lis, nil)
 	// watch websocket
 	ch := make(chan struct{}, 1)
 	go subWS(ch)
@@ -313,11 +297,7 @@ func update(db *DB) error {
 			if watching[name] {
 				log.Printf("[%11s] %s %s %+d -> %d", mode, name, result, change, data.bank)
 				if mode != "tournament" {
-					f, _ := os.OpenFile(name+".csv", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-					if f != nil {
-						fmt.Fprintf(f, "%d,%d\n", time.Now().Unix(), data.bank)
-						f.Close()
-					}
+					db.AddHistory(name, data.bank)
 				}
 			}
 		}

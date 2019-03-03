@@ -11,15 +11,15 @@ const (
 	eliteSelect = 4
 	mutateMin   = 0.2
 	mutateMax   = 5.0
-	termSlope   = 0.001
-	termStride  = 20
+	termSlope   = 0.0001
+	termStride  = 25
 	termMinGen  = 20
 )
 
 // betting limits
 const (
-	mmScale        = 1 / 2.0
-	trnScale       = 2.0
+	mmScale        = 2.0
+	trnScale       = 20.0
 	alwaysAllIn    = 5000
 	maxAllIn       = 100e3
 	maxBet         = 256e3

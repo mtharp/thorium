@@ -3,12 +3,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -45,11 +42,6 @@ type matchRecord struct {
 }
 
 func runIRC(ts oauth2.TokenSource) error {
-	db, err := connectDB()
-	if err != nil {
-		return fmt.Errorf("can't connect to DB: %s", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	t, err := ts.Token()
@@ -89,12 +81,9 @@ func runIRC(ts oauth2.TokenSource) error {
 			}
 			log.Printf("bets open: red=%s blue=%s tier=%s mode=%s", m[1], m[2], m[3], mr.Mode)
 			status = "open"
-			mst := struct {
-				P1, P2, Tier, Mode string
-			}{m[1], m[2], m[3], mr.Mode}
-			blob, _ := json.Marshal(mst)
-			ioutil.WriteFile("/tmp/mstate.json.tmp", blob, 0644)
-			os.Rename("/tmp/mstate.json.tmp", "/tmp/mstate.json")
+			if err := setCurrentMatch(mr); err != nil {
+				log.Printf("error: setting current match: %s", err)
+			}
 		} else if m := lineClosed.FindStringSubmatch(text); m != nil {
 			log.Printf("bets locked: streakRed=%s potRed=%s streakBlue=%s potBlue=%s", m[1], m[2], m[3], m[4])
 			if status == "open" {
@@ -108,6 +97,9 @@ func runIRC(ts oauth2.TokenSource) error {
 			if status == "locked" {
 				// mode switch but no match result yet
 				mr.Stop = time.Now()
+				if err := clearCurrentMatch(); err != nil {
+					log.Printf("error: setting current match: %s", err)
+				}
 			}
 		} else if m := linePaid.FindStringSubmatch(text); m != nil {
 			log.Printf("match over: winner=%s remaining=%s", m[1], m[2])
@@ -123,7 +115,10 @@ func runIRC(ts oauth2.TokenSource) error {
 				default:
 					return
 				}
-				recordMatch(db, mr)
+				recordMatch(mr)
+				if err := clearCurrentMatch(); err != nil {
+					log.Printf("error: setting current match: %s", err)
+				}
 			}
 			status = ""
 		} else if !lineIgnore.MatchString(text) {
