@@ -16,6 +16,9 @@ import (
 
 	deep "github.com/patrikeh/go-deep"
 	"github.com/spf13/viper"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 type tierData struct {
@@ -38,13 +41,9 @@ var (
 )
 
 func main() {
-	viper.SetConfigName("thorium")
-	viper.AddConfigPath(".")
-	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalln("error:", err)
-	}
+	viper.AutomaticEnv()
 	if len(os.Args) < 2 {
-		log.Fatalln("pred, train")
+		log.Fatalln("pred, train, bet")
 	}
 	switch os.Args[1] {
 	case "pred":
@@ -83,7 +82,9 @@ func main() {
 		if err != nil {
 			log.Fatalln("error:", err)
 		}
-		watchAndRun(nn)
+		go http.ListenAndServe(":6666", nil)
+		metaURL := viper.GetString("metadata")
+		watchAndRun(nn, metaURL)
 	}
 }
 

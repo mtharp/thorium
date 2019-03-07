@@ -42,6 +42,7 @@ func main() {
 		NewToken: newToken,
 	}
 	http.HandleFunc("/healthz", s.viewHealth)
+	http.HandleFunc("/current", s.viewCurrent)
 	http.HandleFunc("/", s.viewCallback)
 	var good bool
 	t, err := getToken()

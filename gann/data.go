@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx"
-	"github.com/spf13/viper"
 )
 
 const potAvgDecay = 0.2
@@ -63,7 +62,7 @@ func (r *matchRecord) Payoff(wager float64) float64 {
 func getRecords(table string, since time.Time, initPotAvg float64, tournament bool) (tierRecs map[string][]*matchRecord, ts time.Time, potAvg float64, err error) {
 	potAvg = initPotAvg
 	tierRecs = make(map[string][]*matchRecord)
-	cfg, err := pgx.ParseConnectionString(viper.GetString("db.url"))
+	cfg, err := pgx.ParseEnvLibpq()
 	if err != nil {
 		return
 	}
@@ -153,11 +152,11 @@ func (m charStatsMap) Update(recs []*matchRecord) {
 		iwin, ilose := rec.Winner, 1-rec.Winner
 		swin := m[rec.Name[iwin]]
 		if swin == nil {
-			swin = &charStats{Name: rec.Name[iwin]}
+			swin = &charStats{Name: rec.Name[iwin], Favor: 1}
 		}
 		slose := m[rec.Name[ilose]]
 		if slose == nil {
-			slose = &charStats{Name: rec.Name[ilose]}
+			slose = &charStats{Name: rec.Name[ilose], Favor: 1}
 		}
 		swin.Wins++
 		swin.WinTime += float64(rec.Duration)

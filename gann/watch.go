@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,9 +19,11 @@ import (
 	"github.com/spf13/viper"
 )
 
-func watchAndRun(nn *deep.Neural) {
-	var p1name, p2name string
-	var mst struct{ P1, P2, Tier, Mode string }
+type matchMeta struct {
+	Name1, Name2, Tier, Mode string
+}
+
+func watchAndRun(nn *deep.Neural, metaURL string) {
 	var failures int
 	_, ts, avgPot := prepData(false)
 	jar, _ := cookiejar.New(nil)
@@ -30,19 +33,21 @@ func watchAndRun(nn *deep.Neural) {
 		log.Fatalln("error:", err)
 	}
 	log.Printf("scraped uid=%s bank=%f", uid, bank)
+	var pending matchMeta
 	var bankChanged, modeChanged bool
 	lastMode := ""
 	for {
 		// wait for tier info
-		blob, _ := ioutil.ReadFile("/tmp/mstate.json")
-		json.Unmarshal(blob, &mst)
-		if mst.P1 == p1name && mst.P2 == p2name {
-			time.Sleep(time.Second)
+		match, err := pollMatch(pending, metaURL)
+		if err != nil {
+			log.Printf("warning: failed to poll match status: %s", err)
+			continue
+		} else if match == pending || match.IsZero() {
+			pending = match
 			continue
 		}
-		p1name = mst.P1
-		p2name = mst.P2
-		modeChanged = lastMode != "" && lastMode != mst.Mode
+		pending = match
+		modeChanged = lastMode != "" && lastMode != match.Mode
 		if modeChanged {
 			bankChanged = true
 			if lastMode == "tournament" {
@@ -50,7 +55,7 @@ func watchAndRun(nn *deep.Neural) {
 				prepData(false)
 			}
 		}
-		lastMode = mst.Mode
+		lastMode = match.Mode
 		// update bank
 		if bankChanged {
 			var zbank float64
@@ -80,7 +85,7 @@ func watchAndRun(nn *deep.Neural) {
 			bankChanged = false
 		}
 		// update character data
-		tierRecs, ts2, avgPot2, err := getRecords("matches", ts, avgPot, true)
+		tierRecs, ts2, avgPot2, err := getRecords("matches", ts, avgPot, match.Mode == "tournament")
 		if err != nil {
 			log.Printf("error: fetching new match records: %s", err)
 		} else {
@@ -94,21 +99,21 @@ func watchAndRun(nn *deep.Neural) {
 			avgPot = avgPot2
 		}
 
-		idx, ok := tierIdx[mst.Tier]
+		idx, ok := tierIdx[match.Tier]
 		if !ok {
 			continue
 		}
 		d := tiers[idx]
 
-		if _, ok := d.chars[p1name]; !ok {
-			log.Printf("no data for %q", p1name)
+		if _, ok := d.chars[match.Name1]; !ok {
+			log.Printf("no data for %q", match.Name1)
 			continue
 		}
-		if _, ok := d.chars[p2name]; !ok {
-			log.Printf("no data for %q", p2name)
+		if _, ok := d.chars[match.Name2]; !ok {
+			log.Printf("no data for %q", match.Name2)
 			continue
 		}
-		rec := newLiveRecord(mst.Tier, p1name, p2name, avgPot)
+		rec := newLiveRecord(match.Tier, match.Name1, match.Name2, avgPot)
 		wg := wagerFromVector(nn.Predict(d.BetVector(rec, bank)))
 		if wg.Size() <= 0 {
 			log.Printf("too close to call")
@@ -118,7 +123,7 @@ func watchAndRun(nn *deep.Neural) {
 		base := bank * wg.Size()
 		wager := base
 		bailout := float64(defaultBailout)
-		switch mst.Mode {
+		switch match.Mode {
 		case "matchmaking":
 			wager *= mmScale
 		case "tournament":
@@ -128,7 +133,7 @@ func watchAndRun(nn *deep.Neural) {
 			log.Printf("exhibs are for suckers")
 			continue
 		default:
-			log.Printf("unknown mode %q", mst.Mode)
+			log.Printf("unknown mode %q", match.Mode)
 			continue
 		}
 		if bank-wager < bailout || wager > bank || bank < alwaysAllIn {
@@ -152,9 +157,9 @@ func watchAndRun(nn *deep.Neural) {
 		log.Printf("Placing %d%s on %q", dwager, suffix, rec.Name[idx])
 		//continue
 		var p int
-		if rec.Name[idx] == p1name {
+		if rec.Name[idx] == match.Name1 {
 			p = 1
-		} else if rec.Name[idx] == p2name {
+		} else if rec.Name[idx] == match.Name2 {
 			p = 2
 		} else {
 			continue
@@ -183,6 +188,33 @@ func intfield(d interface{}) int64 {
 	return n
 }
 
+func pollMatch(lastMatch matchMeta, u string) (matchMeta, error) {
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return matchMeta{}, err
+	}
+	v := make(url.Values)
+	v.Set("p1", lastMatch.Name1)
+	v.Set("p2", lastMatch.Name2)
+	req.URL.RawQuery = v.Encode()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		return matchMeta{}, err
+	}
+	blob, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return matchMeta{}, fmt.Errorf("HTTP %s %s:\n%s", resp.Status, resp.Request.URL, blob)
+	}
+	var m2 matchMeta
+	if err := json.Unmarshal(blob, &m2); err != nil {
+		return matchMeta{}, err
+	}
+	return m2, nil
+}
+
 func getBank(cli *http.Client, uid string) (float64, error) {
 	req, _ := http.NewRequest("GET", "http://www.saltybet.com/zdata.json", nil)
 	blob, err := do(cli, req)
@@ -206,7 +238,7 @@ func do(cli *http.Client, req *http.Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	respb, err := ioutil.ReadAll(resp.Body)
+	respb, _ := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %s %s:\n%s", resp.Status, resp.Request.URL, respb)
@@ -256,4 +288,8 @@ func scrapeHome(cli *http.Client) (uid string, bank float64, err error) {
 	bankInt, _ := strconv.ParseInt(string(m[1]), 10, 0)
 	bank = float64(bankInt)
 	return
+}
+
+func (m matchMeta) IsZero() bool {
+	return m.Name1 == "" || m.Name2 == "" || m.Tier == "" || m.Mode == ""
 }

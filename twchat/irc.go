@@ -36,9 +36,9 @@ var (
 type matchRecord struct {
 	Name1, Name2 string
 	Tier, Mode   string
-	Pot1, Pot2   int64
-	TwoWins      bool
-	Start, Stop  time.Time
+	Pot1, Pot2   int64     `json:"-"`
+	TwoWins      bool      `json:"-"`
+	Start, Stop  time.Time `json:"-"`
 }
 
 func runIRC(ts oauth2.TokenSource) error {
@@ -84,6 +84,7 @@ func runIRC(ts oauth2.TokenSource) error {
 			if err := setCurrentMatch(mr); err != nil {
 				log.Printf("error: setting current match: %s", err)
 			}
+			currentMatchNotify(mr)
 		} else if m := lineClosed.FindStringSubmatch(text); m != nil {
 			log.Printf("bets locked: streakRed=%s potRed=%s streakBlue=%s potBlue=%s", m[1], m[2], m[3], m[4])
 			if status == "open" {
@@ -100,6 +101,7 @@ func runIRC(ts oauth2.TokenSource) error {
 				if err := clearCurrentMatch(); err != nil {
 					log.Printf("error: setting current match: %s", err)
 				}
+				currentMatchNotify(matchRecord{})
 			}
 		} else if m := linePaid.FindStringSubmatch(text); m != nil {
 			log.Printf("match over: winner=%s remaining=%s", m[1], m[2])
@@ -119,6 +121,7 @@ func runIRC(ts oauth2.TokenSource) error {
 				if err := clearCurrentMatch(); err != nil {
 					log.Printf("error: setting current match: %s", err)
 				}
+				currentMatchNotify(matchRecord{})
 			}
 			status = ""
 		} else if !lineIgnore.MatchString(text) {
