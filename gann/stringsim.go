@@ -104,7 +104,7 @@ func fmtVec(x []float64) string {
 	return strings.Join(w, " ")
 }
 
-const betVectorSize = 6
+const betVectorSize = 5
 
 func (d *tierData) BetVector(rec *matchRecord, bank float64) []float64 {
 	rec.bvo.Do(func() {
@@ -118,7 +118,6 @@ func (d *tierData) BetVector(rec *matchRecord, bank float64) []float64 {
 			astat.CrowdFavor() - bstat.CrowdFavor(),
 			astat.AvgWinTime() - bstat.AvgWinTime(),
 			leastGames(astat, bstat),
-			bank / rec.PotAvg,
 			float64(tierIdx[rec.Tier]),
 		}
 	})
